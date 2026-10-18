@@ -179,7 +179,7 @@ python scripts/run_inpipe.py --from r1 --to r5_video     # 只重跑最终模型
 
 ```
 PipeRecon3D/
-├─ README.md
+├─ README.md / LICENSE（MIT）
 ├─ requirements.txt / .gitignore
 ├─ config/paths.example.json      路径模板（复制为 paths.json）
 ├─ tools/install_third_party.py   下载 OpenMVG 1.6 / OpenMVS 2.4.0
@@ -259,4 +259,9 @@ PipeRecon3D/
 - 真实污水管视频：University of Sheffield ORDA 10.15131/shef.data.21198070，CC BY-NC-SA 4.0（仅非商业用途）；Edwards 等，Frontiers in Robotics and AI，2023，10.3389/frobt.2023.1150508。
 - InPipe-SLAM：Zenodo 18615583，CC BY 4.0。
 - OpenMVG（MPL-2.0）、OpenMVS（AGPL-3.0）、COLMAP（BSD）为第三方程序，本仓库只调用其预编译程序，不包含它们的代码。
-- 本仓库代码的许可证尚未选定（上传前请添加 LICENSE；若打算与 OpenMVS 一起分发，注意 AGPL 的要求）。
+- **本仓库的代码和文档采用 MIT 许可证**（见 [LICENSE](LICENSE)）。
+- 第三方程序不在仓库里，各自遵循自己的许可证：OpenMVG 1.6 和 OpenMVS 2.4.0 由 `tools/install_third_party.py` 从官方发布页下载；
+  COLMAP 只用于对比实验，需要时自己从 https://github.com/colmap/colmap/releases 下载（本项目用的是 4.2.1 CUDA 版）。
+  如果把 OpenMVS 的程序和本仓库打包在一起分发，还需遵守 AGPL-3.0。
+- `results/` 里由数据集画面生成的图（预览拼图 `contact_sheet.jpg`、对比视频截帧 `compare_*.jpg`、`model_views.jpg`、`focal_check/` 里的画面等）
+  沿用对应数据集的许可，不属于 MIT 授权范围：Sheffield 管道视频与 InPipe-SLAM 为 CC BY 4.0，真实污水管 Pipe 1 为 CC BY-NC-SA 4.0（仅非商业用途）。
