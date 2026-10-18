@@ -1,0 +1,23 @@
+# machine-specific paths (copy config/paths.example.json)
+config/paths.json
+# third-party binaries (tools/install_third_party.py) and big data / work folders
+third_party/
+data/
+work/
+logs/
+# large outputs: keep them in GitHub Releases or on disk, not in git
+*.mp4
+*.avi
+*.ply
+*.obj
+*.mtl
+*.npz
+*.npy
+*.mvs
+*.bin
+*.zip
+*.7z
+results/**/textured_model/
+# Python
+__pycache__/
+*.pyc
