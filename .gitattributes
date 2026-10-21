@@ -1,0 +1,2 @@
+# shell scripts run in WSL (bash): keep LF even with core.autocrlf=true (docs/10: a CRLF .sh fails with "ambiguous redirect")
+*.sh text eol=lf
