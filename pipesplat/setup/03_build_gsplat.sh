@@ -1,0 +1,39 @@
+#!/bin/bash
+# 第 0 步 / docs/07 第 4.5 节：从源码编译 gsplat（固定 commit）和 fused-ssim，再跑 check_gsplat.py。
+# CPU 重任务：单独运行，不和 OpenMVS/COLMAP 等同时跑。
+# 在 pipe3d 发行版里以 root 运行：wsl -d pipe3d -u root -- bash <本文件>
+set -euo pipefail
+LOG=/mnt/d/pipe3d_gs/logs/setup_03.log
+mkdir -p "$(dirname "$LOG")"
+exec > >(tee -a "$LOG") 2>&1
+
+export CUDA_HOME=/usr/local/cuda-12.8
+export PATH="$CUDA_HOME/bin:$PATH"
+export TORCH_CUDA_ARCH_LIST="12.0"   # 只为 RTX 5060 Ti（sm_120）编译
+export MAX_JOBS=4                    # 每个 nvcc 约 1-1.5 GB 内存，WSL 只有 8 GB
+VENV=/opt/gsenv
+SRC=/opt/src/gsplat
+GSPLAT_COMMIT=512d366b6707           # 2026-09-19 的 main（gsplat 1.6.0 开发版）
+FUSED_SSIM="git+https://github.com/rahul-goel/fused-ssim@a7c48d6dd7ac6dc39a7958c7c4452e0b10418f38"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+
+echo "== $(date '+%F %T') clone gsplat @ $GSPLAT_COMMIT"
+mkdir -p /opt/src
+[ -d "$SRC/.git" ] || git clone https://github.com/nerfstudio-project/gsplat.git "$SRC"
+git -C "$SRC" checkout "$GSPLAT_COMMIT"
+git -C "$SRC" submodule update --init gsplat/cuda/csrc/third_party/glm   # 只要 glm；googletest 只用于测试
+git -C "$SRC" log -1 --format='%H %cd %s'
+
+echo "== $(date '+%F %T') build + install gsplat (TORCH_CUDA_ARCH_LIST=$TORCH_CUDA_ARCH_LIST MAX_JOBS=$MAX_JOBS)"
+"$VENV/bin/pip" install --no-cache-dir --no-build-isolation -v "$SRC"
+
+echo "== $(date '+%F %T') build + install fused-ssim"
+"$VENV/bin/pip" install --no-cache-dir --no-build-isolation "$FUSED_SSIM"
+
+echo "== $(date '+%F %T') check"
+"$VENV/bin/python" "$HERE/check_gsplat.py"
+
+"$VENV/bin/pip" list > /mnt/d/pipe3d_gs/logs/pip_list_03.txt
+du -sh "$VENV" /opt/src
+df -h / | tail -n 1
+echo "== $(date '+%F %T') done"
