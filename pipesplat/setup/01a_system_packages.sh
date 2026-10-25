@@ -1,9 +1,10 @@
 #!/bin/bash
 # 第 0 步 / docs/07 第 4.3 节（前半）：编译基础包 + NVIDIA 软件源，并查询 CUDA 12.8 工具包的准确下载量。
 # 在 pipe3d 发行版里以 root 运行：wsl -d pipe3d -u root -- bash <本文件>
+source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"   # REPO, P (pipesplat), PY, GS, TORCH_HOME from scripts/paths.py
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
-LOG=/mnt/d/pipe3d_gs/logs/setup_01a.log
+LOG=$GS/logs/setup_01a.log
 mkdir -p "$(dirname "$LOG")"
 exec > >(tee -a "$LOG") 2>&1
 

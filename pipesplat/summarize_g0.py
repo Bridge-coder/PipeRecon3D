@@ -1,13 +1,16 @@
 """Table of the Gaussian runs (every ROOT/<data>/run_*/summary*.json) with the decision-rule numbers of docs/08 section 6.
 
-usage: python -I pipesplat/summarize_g0.py [ROOT=D:/pipe3d_gs/g0]
+usage: python -I pipesplat/summarize_g0.py [ROOT=GS_ROOT/g0]   (GS_ROOT from scripts/paths.py)
 """
 import glob
 import json
 import os
 import sys
 
-root = sys.argv[1] if len(sys.argv) > 1 else "D:/pipe3d_gs/g0"
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+import paths  # noqa: E402
+
+root = sys.argv[1] if len(sys.argv) > 1 else os.path.join(paths.GS_ROOT, "g0")
 ORDER = ["run_g0", "run_g0_adc", "run_g0a", "run_g0al", "run_g0al_s20", "run_g0ala_s20"]
 print("| run | mask | Gaussians | in-seq G PSNR / LPIPS / shift / detail / hf / low | in-seq B PSNR / LPIPS | in-seq N PSNR / LPIPS "
       "| block G PSNR / LPIPS / shift / low | rule 1: dgap dB / dLPIPS | rule 2: depth err in / block |")

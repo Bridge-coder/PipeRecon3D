@@ -8,8 +8,11 @@ import json
 import os
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "scripts"))
+import paths  # noqa: E402
+
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-G = "D:/pipe3d_gs/g0"
+G = os.path.join(paths.GS_ROOT, "g0")
 SETS = [  # data set, title, [(run, label, kind)]  kind: base / pub / ours_old (10-21) / ours (best now) / ours_try (variant)
     ("concrete_2", "concrete_2（Sheffield 混凝土管）",
      [("run_3dgs", "3DGS", "pub"), ("run_mcmc", "3DGS-MCMC（gsplat 默认参数，训练发散）", "pub"), ("run_2dgs", "2DGS", "pub"),

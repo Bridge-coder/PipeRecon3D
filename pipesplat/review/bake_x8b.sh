@@ -8,14 +8,12 @@
 #   all     the X8 bake on the mesh with the faces OpenMVS left without an image (mesh_all.npz: no holes)
 #   allwall those faces added only where their centre lies at x < 4.26 m, not in the end cap / socket mesh
 #           (mesh_all_wall.npz; adopted in docs/10 X8b)
-# meshes (Windows): python -I pipesplat/review/dump_mesh.py D:/pipe3d/concrete_2 D:/pipe3d_gs/g0/concrete_2/mesh_all.npz
+# meshes (Windows): python -I pipesplat/review/dump_mesh.py <WORK_SHEFFIELD>/concrete_2 <GS_ROOT>/g0/concrete_2/mesh_all.npz
 #           --with-blank   (and mesh_all_wall.npz with --with-blank --blank-max-x 4.26)
-# usage: bake_x8b.sh NAME [NAME ...]   (-> run_bake_NAME; logs /mnt/d/pipe3d_gs/review/{bake,score}_run_bake_NAME.err)
-export TORCH_HOME=/mnt/d/pipe3d_gs/torch_cache
-PY=/opt/gsenv/bin/python
-P=/mnt/c/Users/PC/Desktop/PipeRecon3D/pipesplat
-G=/mnt/d/pipe3d_gs/g0/concrete_2
-R=/mnt/d/pipe3d_gs/review
+# usage: bake_x8b.sh NAME [NAME ...]   (-> run_bake_NAME; logs <GS_ROOT>/review/{bake,score}_run_bake_NAME.err)
+source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"   # REPO, P (pipesplat), PY, GS, TORCH_HOME from scripts/paths.py
+G=$GS/g0/concrete_2
+R=$GS/review
 for n in "$@"; do
   case $n in
     rep)       o="" ;;

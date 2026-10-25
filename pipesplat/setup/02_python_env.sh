@@ -2,8 +2,9 @@
 # 第 0 步 / docs/07 第 4.4 节：Python 3.12 venv + torch 2.9.1（PyPI 的 Linux 默认包即 CUDA 12.8 构建）+ 常用包。
 # --no-cache-dir：WSL 虚拟磁盘不能设为稀疏，pip 缓存删掉后空间也不会还给 D:，所以不留缓存。
 # 在 pipe3d 发行版里以 root 运行：wsl -d pipe3d -u root -- bash <本文件>
+source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"   # REPO, P (pipesplat), PY, GS, TORCH_HOME from scripts/paths.py
 set -euo pipefail
-LOG=/mnt/d/pipe3d_gs/logs/setup_02.log
+LOG=$GS/logs/setup_02.log
 mkdir -p "$(dirname "$LOG")"
 exec > >(tee -a "$LOG") 2>&1
 VENV=/opt/gsenv
@@ -29,7 +30,7 @@ torch.cuda.synchronize()
 print("matmul ok", bool(torch.isfinite(y).all()), "peak MB", round(torch.cuda.max_memory_allocated() / 1e6))
 EOF
 
-"$VENV/bin/pip" list > /mnt/d/pipe3d_gs/logs/pip_list_02.txt
+"$VENV/bin/pip" list > $GS/logs/pip_list_02.txt
 du -sh "$VENV"
 df -h / | tail -n 1
 echo "== $(date '+%F %T') done"

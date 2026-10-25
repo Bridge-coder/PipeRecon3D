@@ -27,8 +27,8 @@ import paths  # noqa: E402
 import render_views as rv  # noqa: E402
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
-WORK = {"concrete_2": "D:/pipe3d/concrete_2", "concrete_lab": "D:/pipe3d_new/concrete_lab",
-        "sewer_pipe1": "D:/pipe3d_new/sewer_pipe1/work"}     # Pipe1: run with PIPE3D_PIPE_DIAMETER_M=0.435 (docs/11)
+WORK = {"concrete_2": os.path.join(paths.WORK_SHEFFIELD, "concrete_2"), "concrete_lab": os.path.join(paths.WORK_NEW, "concrete_lab"),
+        "sewer_pipe1": os.path.join(paths.WORK_NEW, "sewer_pipe1", "work")}     # Pipe1: run with PIPE3D_PIPE_DIAMETER_M=0.435 (docs/11)
 
 
 def vertex_normals(xyz, tri):
@@ -48,7 +48,7 @@ def main():
     else:
         import lampmap_inpipe as li
         m = li.load_mesh()
-        sc = np.load("D:/pipe3d_gs/g0/inpipe_vision/scene.npz")
+        sc = np.load(os.path.join(paths.GS_ROOT, "g0", "inpipe_vision", "scene.npz"))
         eyes, vm = sc["train_eyes"].astype(np.float64), sc["train_viewmats"].astype(np.float64)
         x = eyes[-1] - eyes[0]
         x /= np.linalg.norm(x)

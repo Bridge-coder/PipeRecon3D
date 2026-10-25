@@ -7,11 +7,10 @@
 # surface_bake.npz (texture layout) when they exist (the mesh moved onto the model's surface), else the scene's mesh.npz
 # (the first scoring drew one disc per triangle and is kept as *_disc: wrong for a texture on the triangles)
 # usage: score_bake.sh [BAKE_RUN=run_bake]
-export TORCH_HOME=/mnt/d/pipe3d_gs/torch_cache
-PY=/opt/gsenv/bin/python
-T=/mnt/c/Users/PC/Desktop/PipeRecon3D/pipesplat/train_tex.py
-G=/mnt/d/pipe3d_gs/g0/concrete_2
-R=/mnt/d/pipe3d_gs/review
+source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"   # REPO, P (pipesplat), PY, GS, TORCH_HOME from scripts/paths.py
+T=$P/train_tex.py
+G=$GS/g0/concrete_2
+R=$GS/review
 B=${1:-run_bake}
 S="--mesh-raster $G/mesh.npz"
 [ -f $G/$B/surface_bake.npz ] && S="--surface $G/$B/surface_bake.npz --mesh-raster $G/$B/mesh_bake.npz"

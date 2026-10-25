@@ -41,7 +41,7 @@ frames (OpenMVS) or a texture learnt together with a lamp model (TX, train_tex.p
        [--surface OUT_DIR/surface_bake.npz]
    export_tex_obj.py vision WORK_DIR OUT_DIR [--mesh OUT_DIR/mesh_bake.npz]
 
-usage: TORCH_HOME=/mnt/d/pipe3d_gs/torch_cache /opt/gsenv/bin/python pipesplat/bake_gs_tex.py SCENE_DIR MODEL_RUN OUT_DIR
+usage: TORCH_HOME=<TORCH_CACHE of scripts/paths.py> /opt/gsenv/bin/python pipesplat/bake_gs_tex.py SCENE_DIR MODEL_RUN OUT_DIR
            [--mesh-surface] [--near-tau 1.0] [--ref-z 0.65] [--ref-sigma 0.1] [--lp-mm 12] [--alpha-min 0.95]
            [--mesh mesh.npz] [--end-x X --end-mode ref|tau|robust [--end-tau 10] [--end-hl 0.15] [--end-ramp 0.02]]
        MODEL_RUN  a train_gs.py run without --lamp (model.pt; its colour is what the camera saw)

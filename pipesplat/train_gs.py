@@ -20,7 +20,7 @@ change at a time:
             second, view-independent colour per Gaussian (start ~0.01) that the lamp factor does not scale: light from
             the room entering through the slot and the open end of the InPipe pipe follows the world, not the robot.
 
-usage: TORCH_HOME=/mnt/d/pipe3d_gs/torch_cache /opt/gsenv/bin/python pipesplat/train_gs.py SCENE_DIR OUT_DIR
+usage: TORCH_HOME=<TORCH_CACHE of scripts/paths.py> /opt/gsenv/bin/python pipesplat/train_gs.py SCENE_DIR OUT_DIR
            [--iters 30000] [--adc] [--anchor] [--no-blocks] [--save 4] [--seed 0] [--eval-only] [--alphas 0.99 0.5]
        SCENE_DIR  output of export_g0.py (scene.npz)
        OUT_DIR    train.log, model.pt, summary.json, per_frame.csv, renders/*.jpg (video | B | G0)

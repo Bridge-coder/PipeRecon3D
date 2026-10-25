@@ -1,11 +1,9 @@
 #!/bin/bash
 # docs/11 Y2/Y3: short GPU jobs run while the training queue is paused: Pipe1 bakes (colours from the model / from the
 # video, 1 mm texels: 11 m of 442 mm pipe), and outside views of this round's Gaussian models (cameras from outside_views.py)
-export TORCH_HOME=/mnt/d/pipe3d_gs/torch_cache
-PY=/opt/gsenv/bin/python
-P=/mnt/c/Users/PC/Desktop/PipeRecon3D/pipesplat
-G=/mnt/d/pipe3d_gs/g0
-V=/mnt/d/pipe3d_gs/review/outside
+source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"   # REPO, P (pipesplat), PY, GS, TORCH_HOME from scripts/paths.py
+G=$GS/g0
+V=$GS/review/outside
 for name in run_bake_vhf_model run_bake_vhf; do
   rm -rf $G/sewer_pipe1/$name
   src=video; [ $name = run_bake_vhf_model ] && src=model

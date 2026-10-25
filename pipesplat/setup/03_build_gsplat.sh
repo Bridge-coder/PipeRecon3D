@@ -2,8 +2,9 @@
 # 第 0 步 / docs/07 第 4.5 节：从源码编译 gsplat（固定 commit）和 fused-ssim，再跑 check_gsplat.py。
 # CPU 重任务：单独运行，不和 OpenMVS/COLMAP 等同时跑。
 # 在 pipe3d 发行版里以 root 运行：wsl -d pipe3d -u root -- bash <本文件>
+source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"   # REPO, P (pipesplat), PY, GS, TORCH_HOME from scripts/paths.py
 set -euo pipefail
-LOG=/mnt/d/pipe3d_gs/logs/setup_03.log
+LOG=$GS/logs/setup_03.log
 mkdir -p "$(dirname "$LOG")"
 exec > >(tee -a "$LOG") 2>&1
 
@@ -33,7 +34,7 @@ echo "== $(date '+%F %T') build + install fused-ssim"
 echo "== $(date '+%F %T') check"
 "$VENV/bin/python" "$HERE/check_gsplat.py"
 
-"$VENV/bin/pip" list > /mnt/d/pipe3d_gs/logs/pip_list_03.txt
+"$VENV/bin/pip" list > $GS/logs/pip_list_03.txt
 du -sh "$VENV" /opt/src
 df -h / | tail -n 1
 echo "== $(date '+%F %T') done"

@@ -1,5 +1,5 @@
 # docs/11: the rest of this round after 3DGS-MCMC diverged on concrete_2 with gsplat's defaults (its remaining runs dropped)
-$q = "/mnt/c/Users/PC/Desktop/PipeRecon3D/pipesplat/review/queue.sh"
+$q = "/mnt/" + $PSScriptRoot.Substring(0, 1).ToLower() + ($PSScriptRoot.Substring(2) -replace '\\', '/') + "/queue.sh"   # this folder as WSL sees it
 wsl -d pipe3d -u root -- bash $q `
   "inpipe_vision run_3dgs --baseline 3dgs" `
   "inpipe_vision run_2dgs --baseline 2dgs" `

@@ -18,7 +18,7 @@ Per training frame and iteration:
 Scoring: the same frames and ruler v2 as train_gs.py --ruler2 (B's mask, references Nal and D) plus the old
 metrics, summary_r2.json in the same layout, so summarize_r2.py lists TX next to the Gaussian runs.
 
-usage: TORCH_HOME=/mnt/d/pipe3d_gs/torch_cache /opt/gsenv/bin/python pipesplat/train_tex.py SCENE_DIR OUT_DIR
+usage: TORCH_HOME=<TORCH_CACHE of scripts/paths.py> /opt/gsenv/bin/python pipesplat/train_tex.py SCENE_DIR OUT_DIR
            [--texel-mm 0.5] [--iters 20000] [--no-lamp] [--ambient] [--pose-opt] [--save 4] [--export]
 writes OUT_DIR/train.log, tex.pt (texture + lamp + gains + pose corrections), summary_r2.json, per_frame_r2.csv,
        renders/*.jpg (video | B | TX), and with --export texture.png (+ cap.png) for the textured mesh (export_tex_obj.py)

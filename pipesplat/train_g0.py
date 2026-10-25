@@ -1,7 +1,7 @@
 """Step 1 (docs/06, docs/08): G0 = Gaussian-LIC2-style Gaussian mapping on our poses and geometry, then the in-sequence
 and block evaluation against lampmap's B on the same pixels. Runs in the pipe3d WSL distro.
 
-usage: TORCH_HOME=/mnt/d/pipe3d_gs/torch_cache /opt/gsenv/bin/python pipesplat/train_g0.py SCENE_DIR OUT_DIR
+usage: TORCH_HOME=<TORCH_CACHE of scripts/paths.py> /opt/gsenv/bin/python pipesplat/train_g0.py SCENE_DIR OUT_DIR
            [--iters 30000] [--adc] [--no-blocks] [--save 4] [--seed 0]
        SCENE_DIR  output of export_g0.py (scene.npz)
        OUT_DIR    train.log, model.pt, summary.json, per_frame.csv, renders/*.jpg (video | B | G0)

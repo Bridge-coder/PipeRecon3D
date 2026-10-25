@@ -8,5 +8,9 @@
   "INPIPE_RESULTS": "results/inpipe_172011",
   "FUSED_BIG": "D:/fusion/fused_172011",
   "RECON_BIG": "D:/fusion/recon_172011",
-  "DIAG_BIG": "D:/fusion/diag_172011"
+  "DIAG_BIG": "D:/fusion/diag_172011",
+  "WORK_SHEFFIELD": "D:/pipe3d",
+  "WORK_NEW": "D:/pipe3d_new",
+  "GS_ROOT": "D:/pipe3d_gs",
+  "TORCH_CACHE": "D:/pipe3d_gs/torch_cache"
 }

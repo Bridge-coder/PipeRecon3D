@@ -3,11 +3,9 @@
 # (baked texture x lamp map, exact triangles), one after another.
 # usage: bake_tau.sh NAME:TAU [NAME:TAU ...]   e.g. tau01:0.1 tau1:1.0 tau3:3 tau10:10  (-> run_bake_NAME)
 # (run 1 first re-scored run_bake_near, whose first scoring ran out of memory while a diagnosis ran at the same time)
-export TORCH_HOME=/mnt/d/pipe3d_gs/torch_cache
-PY=/opt/gsenv/bin/python
-P=/mnt/c/Users/PC/Desktop/PipeRecon3D/pipesplat
-G=/mnt/d/pipe3d_gs/g0/concrete_2
-R=/mnt/d/pipe3d_gs/review
+source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"   # REPO, P (pipesplat), PY, GS, TORCH_HOME from scripts/paths.py
+G=$GS/g0/concrete_2
+R=$GS/review
 for v in "$@"; do
   n=${v%%:*}; t=${v##*:}
   $PY $P/bake_gs_tex.py $G $G/run_g0a $G/run_bake_$n --near-tau $t > $R/bake_run_bake_$n.err 2>&1

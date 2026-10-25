@@ -27,7 +27,7 @@ the texture is the (u, theta) grid itself, every texel's surface point is center
    texture (bilinear), times a camera-fixed lamp map learnt on training frames (lampmap.learn_lamp_map's recipe,
    "x lamp map" = B's recipe), then the frame's gain + offset. summary_r2.json in summarize_r2.py's layout.
 
-usage: TORCH_HOME=/mnt/d/pipe3d_gs/torch_cache /opt/gsenv/bin/python pipesplat/bake_vhf.py SCENE_DIR MODEL_RUN OUT_DIR
+usage: TORCH_HOME=<TORCH_CACHE of scripts/paths.py> /opt/gsenv/bin/python pipesplat/bake_vhf.py SCENE_DIR MODEL_RUN OUT_DIR
            [--name vhf] [--texel-mm 0.5] [--near-tau 1] [--ref-z auto] [--lp-mm 12] [--alpha-min 0.95] [--far 1.2]
 """
 import argparse

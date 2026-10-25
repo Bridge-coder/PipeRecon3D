@@ -1,10 +1,9 @@
 #!/bin/bash
 # docs/10 section 2: re-score the trained models of docs/08-09 with ruler v2 (eval only, nothing retrained).
-# run: wsl -d pipe3d -u root -- bash /mnt/c/Users/PC/Desktop/PipeRecon3D/pipesplat/review/rescore_r2.sh
-export TORCH_HOME=/mnt/d/pipe3d_gs/torch_cache
-PY=/opt/gsenv/bin/python
-T=/mnt/c/Users/PC/Desktop/PipeRecon3D/pipesplat/train_gs.py
-G=/mnt/d/pipe3d_gs/g0
+# run: wsl -d pipe3d -u root -- bash <repo>/pipesplat/review/rescore_r2.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"   # REPO, P (pipesplat), PY, GS, TORCH_HOME from scripts/paths.py
+T=$P/train_gs.py
+G=$GS/g0
 E="--eval-only --ruler2 --alpha-min 0.5 --suffix _r2"
 run() { echo "=== $1 $2"; $PY $T $G/$1 $G/$1/$2 $E "${@:3}" 2>&1 | grep -v "^  held\|^  block" | tail -14; }
 run concrete_2 run_g0

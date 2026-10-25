@@ -1,5 +1,5 @@
 # docs/11: the training runs of this round, one after another (queue.sh skips a run that already has summary_r2.json)
-$q = "/mnt/c/Users/PC/Desktop/PipeRecon3D/pipesplat/review/queue.sh"
+$q = "/mnt/" + $PSScriptRoot.Substring(0, 1).ToLower() + ($PSScriptRoot.Substring(2) -replace '\\', '/') + "/queue.sh"   # this folder as WSL sees it
 wsl -d pipe3d -u root -- bash $q `
   "sewer_pipe1 run_vhf --anchor --surface surface_vhf.npz" `
   "sewer_pipe1 run_g0a --anchor" `

@@ -22,6 +22,9 @@
 
 **直接看结果**：所有数据集的带纹理三维模型、稠密点云、稀疏模型和对比视频在
 [Releases `v1.0-results`](https://github.com/Bridge-coder/PipeRecon3D/releases/tag/v1.0-results)（16 个文件，2.0 GB；说明见 [docs/04_大文件清单.md](docs/04_大文件清单.md)）。
+v2.0 的高斯模型、烘焙网格、留出帧对比视频和重做所需的中间文件在
+[Releases `v2.0-results`](https://github.com/Bridge-coder/PipeRecon3D/releases/tag/v2.0-results)；
+只靠 GitHub 恢复（下载、放置、重新导出、评分、训练）见 [docs/12_从GitHub恢复.md](docs/12_从GitHub恢复.md)。
 原始数据集的下载地址和 MD5 见 [docs/05_数据下载.md](docs/05_数据下载.md)。
 
 ---
@@ -217,6 +220,7 @@ PipeRecon3D/
    ├─ 06–09                       高斯泼溅改进方案、环境、G0 基线、几何锚定与车灯模型（探索分支）
    ├─ 10_复盘与自检.md             全项目复盘：量尺 v2、逐环节核实、修复 X1–X7、当前最好的模型与剩余问题
    ├─ 11_质量提升与方法对比.md     接着 docs/10 的剩余问题：视觉高度场管壁（InPipe、Pipe1）、烘焙网格、与 3DGS / 2DGS 同尺对比
+   ├─ 12_从GitHub恢复.md           本机文件全删之后：环境、路径配置、下载放置、重新导出场景、评分、训练；恢复测试记录
    └─ history/                    研究过程中的原始记录（中文，按时间）
 ```
 

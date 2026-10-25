@@ -11,7 +11,8 @@ usage: python -I lampmap.py WORK_DIR VIDEO OUT_DIR [--n 44] [--train 40] [--ahea
        OUT_DIR   lamp_map.npy (log gain, image size), lamp_map.png, summary.json, per_frame.csv,
                  renders/heldout_<frame>.jpg (--save of them: video frame | model | model x lamp map)
 The LiDAR + vision model of InPipe-SLAM uses the same functions: lampmap_inpipe.py.
-Run with D:/pipe3d_fm/envs/da3/Scripts/python.exe and TORCH_HOME=D:/pipe3d_fm/torch_cache to get LPIPS as well.
+Run with a Windows Python that has torch + lpips (on the author's machine the da3 conda env) and TORCH_HOME set to
+get LPIPS as well; without them LPIPS is NaN (imgmetrics.py).
 
 Learning the map (model frames only): each frame's render is drawn from its own registered pose (focal length,
 principal point, radial k1), brightness-matched to the frame (gain + offset per channel), and the per-pixel

@@ -2,16 +2,19 @@
 Every row is scored on the same pixels (B's mask); the reference rows B, Nal (next frame aligned onto the frame) and
 D (the frame itself denoised) come from the first run of each data set (they do not depend on the run).
 
-usage: python -I pipesplat/summarize_r2.py [ROOT=D:/pipe3d_gs/g0] [--md OUT.md]
+usage: python -I pipesplat/summarize_r2.py [ROOT=GS_ROOT/g0] [--md OUT.md]   (GS_ROOT from scripts/paths.py)
 """
 import glob
 import json
 import os
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "scripts"))
+import paths  # noqa: E402
+
 md = sys.argv[sys.argv.index("--md") + 1] if "--md" in sys.argv else None
 args = [x for x in sys.argv[1:] if not x.startswith("--") and x != md]
-root = args[0] if args else "D:/pipe3d_gs/g0"
+root = args[0] if args else os.path.join(paths.GS_ROOT, "g0")
 COLS = ("psnr", "lpips", "shift_px", "fid_fine", "fid_mid", "fid_coarse", "en_fine", "en_mid", "mse_low")
 HEAD = ("PSNR", "LPIPS", "shift px", "fid fine", "fid mid", "fid coarse", "energy fine", "energy mid", "low-freq")
 lines = []

@@ -16,8 +16,11 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-V = "D:/pipe3d_gs/review/video"
-G = "D:/pipe3d_gs/g0"
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "scripts"))
+import paths  # noqa: E402
+
+V = os.path.join(paths.GS_ROOT, "review", "video")
+G = os.path.join(paths.GS_ROOT, "g0")
 FONT = "C:/Windows/Fonts/msyh.ttc"
 args = sys.argv[1:]
 fps = float(args[args.index("--fps") + 1]) if "--fps" in args else 2.0

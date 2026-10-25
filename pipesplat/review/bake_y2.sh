@@ -1,9 +1,8 @@
 #!/bin/bash
 # docs/11 Y2: bake_vhf.py variants on InPipe Y1 (run_vhf), one after another; prints the scores
-export TORCH_HOME=/mnt/d/pipe3d_gs/torch_cache
-PY=/opt/gsenv/bin/python
-S=/mnt/c/Users/PC/Desktop/PipeRecon3D/pipesplat/bake_vhf.py
-G=/mnt/d/pipe3d_gs/g0/inpipe_vision
+source "$(dirname "${BASH_SOURCE[0]}")/../env.sh"   # REPO, P (pipesplat), PY, GS, TORCH_HOME from scripts/paths.py
+S=$P/bake_vhf.py
+G=$GS/g0/inpipe_vision
 run() {
   name=$1; shift
   rm -rf $G/$name

@@ -108,12 +108,12 @@ for n in (100, 200, 300):
 # ---- part 2: the baked texture (raw path) against the Gaussian model (canvas -> raw) from the same pose ----------
 if len(sys.argv) > 3:
     import json
-    sys.path.insert(0, "/mnt/c/Users/PC/Desktop/PipeRecon3D/lampmap")
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "lampmap"))
     import imgmetrics as im
     run, bake = sys.argv[2], sys.argv[3]
     MR = None
     if len(sys.argv) > 5:                       # draw the exact triangles of this mesh instead of the discs
-        sys.path.insert(0, "/mnt/c/Users/PC/Desktop/PipeRecon3D/pipesplat")
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         import meshraster
         mz = np.load(sys.argv[5])
         MR = meshraster.MeshRaster(mz["xyz"], mz["tri"], K, k1, w, h, np.nan_to_num(XU), np.nan_to_num(YU), dev)
