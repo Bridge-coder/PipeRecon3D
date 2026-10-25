@@ -64,6 +64,17 @@ ap.add_argument("--dssim", type=float, default=0.2)
 ap.add_argument("--lr", type=float, default=0.01)
 ap.add_argument("--save", type=int, default=4), ap.add_argument("--seed", type=int, default=0)
 ap.add_argument("--eval-only", action="store_true")
+ap.add_argument("--tex-pt", default=None,
+                help="--eval-only: score this tex.pt instead of OUT_DIR/tex.pt (e.g. a texture baked from a Gaussian "
+                     "model by bake_gs_tex.py, docs/10 X8)")
+ap.add_argument("--lamp-map", action="store_true",
+                help="--eval-only with --no-lamp: lampmap's recipe for B - a camera-fixed log gain map learned from every "
+                     "4th training frame (log frame - log brightness-matched render, averaged, smoothed 6 px) multiplies "
+                     "the render before each frame's gain and offset are fitted")
+ap.add_argument("--mesh-raster", default=None,
+                help="draw the surface as the exact triangles of this mesh .npz (xyz, tri; pipesplat/meshraster.py) instead "
+                     "of one gsplat disc per triangle - how an ordinary viewer draws an OBJ (docs/10 X8); the texture "
+                     "layout still comes from --surface")
 ap.add_argument("--export", action="store_true", help="write the texture images for export_tex_obj.py")
 a = ap.parse_args()
 torch.manual_seed(a.seed)
@@ -178,6 +189,21 @@ def surface_dn(view):
     D = torch.where(ok, out[0, ..., 3], torch.zeros_like(a0))
     N = out[0, ..., :3] / a0[..., None].clamp(min=1e-6)
     return D, N / N.norm(dim=-1, keepdim=True).clamp(min=1e-12), ok
+
+
+if a.mesh_raster:                               # exact triangles instead of discs (pipesplat/meshraster.py, docs/10 X8)
+    import meshraster
+    _mz = np.load(a.mesh_raster)
+    MR = meshraster.MeshRaster(_mz["xyz"], _mz["tri"], K, k1, w, h, np.nan_to_num(XU), np.nan_to_num(YU), dev)
+    MR_N = S_ns if len(MR.T) == len(S_ns) else MR.N   # same faces as the surface file: its smoothed normals (lamp)
+    log(f"surface drawn as the {len(MR.T):,} triangles of {a.mesh_raster} (exact raster in the raw frame, "
+        f"{'smoothed' if MR_N is S_ns else 'face'} normals)")
+
+    @torch.no_grad()
+    def surface_dn(view):
+        D, face = MR(view)
+        ok = (face >= 0) & VALID
+        return torch.where(ok, D, torch.zeros_like(D)), MR_N[face.clamp(min=0)], ok
 
 
 # ------------------------------------------------------------------------------ pipe coordinates --------------
@@ -449,7 +475,7 @@ if lamp_on:
 
 # ------------------------------------------------------------------------------ training ----------------------
 if a.eval_only:
-    saved = torch.load(os.path.join(a.out, "tex.pt"))
+    saved = torch.load(a.tex_pt or os.path.join(a.out, "tex.pt"))
     with torch.no_grad():
         for k in params:
             params[k][:] = saved[k].to(dev)
@@ -536,6 +562,25 @@ if a.export or not a.eval_only:
 
 # ------------------------------------------------------------------------------ scoring (ruler v2) ------------
 train_ids, train_t = d["train_ids"], d["train_t"]
+LM = None
+if a.lamp_map:                                  # lampmap.learn_lamp_map on this texture's renders (training frames)
+    assert a.eval_only and not lamp_on, "--lamp-map scores a fixed texture without the lamp model"
+    lm_acc, lm_cnt = np.zeros((h, w)), np.zeros((h, w))
+    with torch.no_grad():
+        for n in np.sort(train)[::4]:
+            img, ok = render(None, views_all[int(n)])
+            G = img.clamp(min=0).mul(255).cpu().numpy()
+            real = raw_train[int(n)].astype(np.float32)
+            m = ok.cpu().numpy() & valid_raw
+            g = im.linear_match(G, real, m)
+            lm_acc += np.where(m, np.log(im.grey(real) + 1.0) - np.log(im.grey(g) + 1.0), 0)
+            lm_cnt += m
+    lm_mean = np.where(lm_cnt > 0, lm_acc / np.maximum(lm_cnt, 1), 0).astype(np.float32)
+    lm_w = cv2.GaussianBlur((lm_cnt > 0).astype(np.float32), (0, 0), 6) + 1e-6
+    LM = np.exp(cv2.GaussianBlur(lm_mean, (0, 0), 6) / lm_w).astype(np.float32)
+    np.save(os.path.join(a.out, "lamp_map.npy"), np.log(LM))
+    log(f"lamp map from {len(np.sort(train)[::4])} training frames: gain p5..p95 {np.percentile(LM, 5):.2f}.."
+        f"{np.percentile(LM, 95):.2f}")
 
 
 def neighbours(fid, ft):
@@ -560,6 +605,8 @@ def score(tag, imgs, nxt, views, B, Bm, ids, pos, times, own_idx=None):
         pi, tw = neighbours(int(ids[k]), int(times[k]))
         img, ok = render(None, view, pose_idx=pi, held_w=tw)
         G = img.clamp(min=0).mul(255).cpu().numpy()
+        if LM is not None:                      # not clipped at 255 (the texture's scale is arbitrary)
+            G = G * LM[..., None]
         real = imgs[k].astype(np.float32)
         m = Bm[k] & valid_raw
         row = dict(tag=tag, frame=int(ids[k]), pos=float(pos[k]), coverage=float(m.mean()),
@@ -602,7 +649,8 @@ with open(os.path.join(a.out, "per_frame_r2.csv"), "w", newline="", encoding="ut
     wr.writeheader()
     wr.writerows(rows + rows_b)
 med = lambda rs: {k: float(np.nanmedian([r[k] for r in rs])) for k in keys} if rs else {}  # noqa: E731
-summary = dict(scene=a.scene, args=vars(a), model="TX texture", texture=[NTH, NU], train_frames=int(len(train)),
+summary = dict(scene=a.scene, args=vars(a), model=f"texture {a.tex_pt}" if a.tex_pt else "TX texture", texture=[NTH, NU],
+               train_frames=int(len(train)),
                iterations_done=done, train_minutes=round(train_s / 60, 2), peak_GB=round(peak, 2),
                held_all=med(rows), held_outside_blocks=med([r for r in rows if not r["in_block"]]), block=med(rows_b))
 json.dump(summary, open(os.path.join(a.out, "summary_r2.json"), "w"), indent=1)

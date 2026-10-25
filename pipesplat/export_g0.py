@@ -1,6 +1,8 @@
 """Export one data set for step 1 (G0 baseline, docs/08): everything the WSL trainer needs, in one npz (runs on Windows).
 
-usage: python -I pipesplat/export_g0.py vision WORK_DIR VIDEO OUT_DIR --lamp LAMP_MAP.npy [--plain --crop --stretch-x]
+usage: python -I pipesplat/export_g0.py vision WORK_DIR VIDEO OUT_DIR --lamp LAMP_MAP.npy|auto [--plain --crop --stretch-x]
+       (--lamp auto: learn B's lamp map here from 40 training frames, as lampmap.py, for a video lampmap never ran on;
+        a video used with --every 1 (Pipe1) gets 44 registered frames held out of training instead of in-between frames)
        python -I pipesplat/export_g0.py inpipe OUT_DIR --lamp LAMP_MAP.npy [--width 640]
 
 Contents of OUT_DIR/scene.npz (all positions in metres, cameras as OpenCV world-to-camera matrices, intrinsics with
@@ -89,6 +91,16 @@ def export_vision(a):
 
     pose = lambda k: (model["cam_xyz"][k], model["cam_ahead"][k], model["cam_above"][k])  # noqa: E731
     out = dict(K=np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]], np.float32), k1=np.float32(k1), size=np.array([w, h], np.int32))
+    in_model = step < 2                          # every video frame is in the model (Pipe1, --every 1)
+    if in_model:
+        # no frames in between: the usual novel-view protocol instead - 44 registered frames spread over the run
+        # (outside the blocks) are held out of the Gaussian training and scored from their own SfM pose. The SfM,
+        # the dense cloud, the mesh and B's texture did see them (B is advantaged; the Gaussians are not)
+        rng_pre = blocks(model["cam_xyz"][order, 0])
+        cand = np.flatnonzero(~in_blocks(model["cam_xyz"][order, 0], rng_pre))[1:-1]
+        hj = cand[np.linspace(0, len(cand) - 1, 44).round().astype(int)]
+        held_k = order[hj]
+        order = np.delete(order, hj)
     out["train_ids"] = src[order].astype(np.int32)
     out["train_viewmats"] = np.stack([cv_viewmat(*pose(k)) for k in order]).astype(np.float32)
     out["train_eyes"] = model["cam_xyz"][order].astype(np.float32)
@@ -98,20 +110,30 @@ def export_vision(a):
     out["train_images"] = np.stack([grab(s) for s in src[order]])
 
     # the 44 held-out frames exactly as lampmap.main picks them
-    render, lamp = lm.Renderer(model, 3.0), np.load(a.lamp)
-    pairs = [(order[i], order[i + 1]) for i in range(len(order) - 1) if src[order[i + 1]] - src[order[i]] == step]
-    held = []
-    for k0, k1_ in (pairs[i] for i in np.linspace(0, len(pairs) - 1, 44).round().astype(int)):
-        s = int((src[k0] + src[k1_]) // 2)
-        held.append((lm.lerp_pose(model, k0, k1_, (s - src[k0]) / (src[k1_] - src[k0])), s))
-    ref = os.path.join(os.path.dirname(a.lamp), "per_frame.csv")
-    if os.path.exists(ref):
-        same = [int(r["frame"]) for r in csv.DictReader(open(ref, encoding="utf-8"))] == [s for _, s in held]
-        log(f"held-out frames identical to lampmap's per_frame.csv: {same}")
+    render = lm.Renderer(model, 3.0)
+    if a.lamp == "auto":                         # no lampmap run for this video: learn B's lamp map here, as lampmap
+        lt = [(pose(order[j]), int(src[order[j]])) for j in np.linspace(0, len(order) - 1, 40).round().astype(int)]
+        lamp = lm.learn_lamp_map(render, read, lt)
+        lm.save_lamp_map(a.out, lamp)
+        log(f"lamp map learnt from {len(lt)} training frames -> {a.out}/lamp_map.npy")
+    else:
+        lamp = np.load(a.lamp)
+    if in_model:
+        held = [(pose(k), int(src[k])) for k in held_k]
+    else:
+        pairs = [(order[i], order[i + 1]) for i in range(len(order) - 1) if src[order[i + 1]] - src[order[i]] == step]
+        held = []
+        for k0, k1_ in (pairs[i] for i in np.linspace(0, len(pairs) - 1, 44).round().astype(int)):
+            s = int((src[k0] + src[k1_]) // 2)
+            held.append((lm.lerp_pose(model, k0, k1_, (s - src[k0]) / (src[k1_] - src[k0])), s))
+        ref = os.path.join(os.path.dirname(a.lamp), "per_frame.csv")
+        if os.path.exists(ref):
+            same = [int(r["frame"]) for r in csv.DictReader(open(ref, encoding="utf-8"))] == [s for _, s in held]
+            log(f"held-out frames identical to lampmap's per_frame.csv: {same}")
     fill_eval(out, "held", held, render, lamp, grab)
     out["held_pos"] = np.array([p[0][0] for p, _ in held], np.float32)
 
-    rng = blocks(out["train_pos"])
+    rng = rng_pre if in_model else blocks(out["train_pos"])
     bidx = np.flatnonzero(in_blocks(out["train_pos"], rng))
     out["block_ranges"], out["block_idx"] = rng.astype(np.float32), bidx.astype(np.int32)
     fill_eval(out, "block", [(pose(order[i]), int(src[order[i]])) for i in bidx], render, lamp, grab, own=False)
@@ -127,7 +149,9 @@ def export_vision(a):
     pts = np.c_[rv.pipe_xyz(x[keep], th[keep], r[keep])].astype(np.float32)
     log(f"dense cloud: {len(v):,} points, {keep.sum():,} within 1 m of the axis")
     out["points"] = out["depth_points"] = pts
-    return out, dict(kind="vision", work=a.work, video=a.video, step=step)
+    return out, dict(kind="vision", work=a.work, video=a.video, step=step,
+                     held_protocol="registered frames held out of training (own SfM pose)" if in_model else
+                     "video frames halfway between model frames (interpolated pose), as lampmap")
 
 
 # ----------------------------------------------------------------------------------------- InPipe --------

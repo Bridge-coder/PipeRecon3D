@@ -2,8 +2,10 @@
 in the pipe frame of scene.npz; InPipe = the R3 height-field mesh) with UVs into TX's unrolled texture.
 Runs on Windows (reads the meshes the way export_surface.py does).
 
-usage: python -I pipesplat/export_tex_obj.py vision WORK_DIR RUN_DIR [OUT_DIR=RUN_DIR/obj]
+usage: python -I pipesplat/export_tex_obj.py vision WORK_DIR RUN_DIR [OUT_DIR=RUN_DIR/obj] [--mesh MESH.npz]
        python -I pipesplat/export_tex_obj.py inpipe RUN_DIR [OUT_DIR]
+--mesh: vertices + faces from this file (e.g. bake_gs_tex.py's mesh_bake.npz: the OpenMVS mesh moved onto the Gaussian
+model's surface) instead of the work dir's OpenMVS mesh.
 writes OUT_DIR/model.obj + model.mtl + texture.png (+ cap.png): open in MeshLab / Blender.
 Faces that cross the theta = +-pi seam get their own copies of the vertices (theta + 2 pi), so the texture does
 not smear across the seam; end-cap faces of a closed pipe use the planar cap texture.
@@ -24,17 +26,27 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace", line_buffering=True)
 
 
 def main():
-    kind = sys.argv[1]
+    argv = list(sys.argv)
+    mesh_npz = None
+    if "--mesh" in argv:
+        i = argv.index("--mesh")
+        mesh_npz = argv[i + 1]
+        del argv[i:i + 2]
+    kind = argv[1]
     if kind == "vision":
-        work, run = sys.argv[2], sys.argv[3]
-        out = sys.argv[4] if len(sys.argv) > 4 else os.path.join(run, "obj")
-        import paths
-        import render_views as rv
-        m = rv.load_model(paths.CONVERTER, work, [None], straighten=False)
-        xyz, tri = m["xyz"], m["tri"][~m["blank"]]
+        work, run = argv[2], argv[3]
+        out = argv[4] if len(argv) > 4 else os.path.join(run, "obj")
+        if mesh_npz:
+            mz = np.load(mesh_npz)
+            xyz, tri = mz["xyz"], mz["tri"]
+        else:
+            import paths
+            import render_views as rv
+            m = rv.load_model(paths.CONVERTER, work, [None], straighten=False)
+            xyz, tri = m["xyz"], m["tri"][~m["blank"]]
     else:
-        run = sys.argv[2]
-        out = sys.argv[3] if len(sys.argv) > 3 else os.path.join(run, "obj")
+        run = argv[2]
+        out = argv[3] if len(argv) > 3 else os.path.join(run, "obj")
         import lampmap_inpipe as li
         m = li.load_mesh()
         xyz, tri = m["xyz"], m["tri"]

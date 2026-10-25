@@ -56,7 +56,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 import gsplat
-from gsplat.strategy import DefaultStrategy
+from gsplat.strategy import DefaultStrategy, MCMCStrategy
 from fused_ssim import fused_ssim
 from scipy.spatial import cKDTree
 
@@ -113,7 +113,39 @@ ap.add_argument("--lamp-ambient", action="store_true",
                      "view-independent colour added after the lamp factor")
 ap.add_argument("--lamp-smooth-mm", type=float, default=20.0,
                 help="surface normals for the lamp's incidence angle averaged over about this radius")
+ap.add_argument("--baseline", choices=("3dgs", "mcmc", "2dgs"), default=None,
+                help="published methods on the same frames, canvas and scoring (docs/11): "
+                     "3dgs = 3D Gaussian Splatting (Kerbl et al. 2023): ADC (gsplat DefaultStrategy), start scale = RMS "
+                     "distance to the 3 nearest points, opacity 0.1, SH degree raised every 1000 iterations, no depth; "
+                     "mcmc = 3DGS as MCMC (Kheradmand et al. 2024): gsplat MCMCStrategy (relocation + noise, as many "
+                     "Gaussians as starting points), opacity 0.5, scale 0.1 x that distance, opacity / scale "
+                     "regularisation 0.01; 2dgs = 2D Gaussian Splatting (Huang et al. 2024): surfels "
+                     "(rasterization_2dgs), ADC on its own gradient, normal consistency 0.05 from 7k, distortion 0.01 "
+                     "from 3k (gsplat's simple_trainer_2dgs defaults). All start from the same dense MVS cloud as ours "
+                     "(a stronger start than the sparse SfM points of the papers)")
+ap.add_argument("--normal-start", type=int, default=7000, help="--baseline 2dgs: normal consistency from this iteration")
+ap.add_argument("--dist-start", type=int, default=3000, help="--baseline 2dgs: depth distortion from this iteration")
+ap.add_argument("--opaque", action="store_true",
+                help="with --anchor: the surface discs are opaque (opacity fixed at 0.99, not learned) - one layer of "
+                     "surfels instead of many semi-transparent ones (docs/10 5.5: median opacity 0.14 looks speckled "
+                     "and see-through from outside the pipe)")
 a = ap.parse_args()
+if a.baseline:
+    assert not (a.anchor or a.lamp or a.raw or a.adc or a.scale_cap), "--baseline is a method of its own"
+    a.adc, a.depth_w = a.baseline in ("3dgs", "2dgs"), 0.0
+assert not a.opaque or a.anchor, "--opaque is for the anchored surface discs"
+if a.baseline == "2dgs":
+    # this gsplat build (1.6.0 @512d366) hands the 2DGS projection backward a non-contiguous depth gradient
+    # ("grad.depths must be contiguous") for every depth render mode; make its inputs contiguous
+    import gsplat.cuda._wrapper as _gw
+    _lazy = _gw._make_lazy_cuda_func
+
+    def _lazy_contig(name):
+        f = _lazy(name)
+        if name != "projection_2dgs_fused_bwd":
+            return f
+        return lambda *args: f(*[x.contiguous() if torch.is_tensor(x) else x for x in args])
+    _gw._make_lazy_cuda_func = _lazy_contig
 assert not a.lamp or a.anchor, "--lamp uses the measured-surface depth of --anchor"
 assert not a.lamp_ambient or a.lamp, "--lamp-ambient extends --lamp"
 assert not (a.anchor and a.adc), "--anchor keeps one Gaussian per snapped point; it is not combined with --adc"
@@ -213,7 +245,11 @@ eyes = d["train_eyes"]
 block_idx = d["block_idx"]
 train = np.setdiff1d(np.arange(len(views_all)), [] if a.no_blocks else block_idx)
 raw_train = d["train_images"]
-IM = {int(i): torch.from_numpy(canvas(raw_train[i])).pin_memory() for i in train}
+IM = {int(i): torch.from_numpy(canvas(raw_train[i])) for i in train}
+if sum(v.numel() for v in IM.values()) < 1.0e9:  # pinned for fast upload; WSL refuses ~1.2 GB of pinned memory
+    IM = {k: v.pin_memory() for k, v in IM.items()}   # (Pipe1), and the failed CUDA call breaks the next one
+else:
+    log("training frames not pinned (more than 1 GB)")
 log(f"{len(train)} training frames (left out: {0 if a.no_blocks else len(block_idx)} block frames in "
     f"{d['block_ranges'].round(3).tolist()} m)")
 
@@ -386,6 +422,12 @@ if a.anchor:
 nn_d, _ = cKDTree(pts.cpu().numpy()).query(pts.cpu().numpy(), k=2)
 spacing = torch.from_numpy(nn_d[:, 1].astype(np.float32)).to(dev)
 scale0 = torch.maximum(best_z / fx, 0.5 * spacing)
+opa0 = 0.1
+if a.baseline:                                  # the papers' start: RMS distance to the 3 nearest points
+    nn3, _ = cKDTree(pts.cpu().numpy()).query(pts.cpu().numpy(), k=4)
+    scale0 = torch.from_numpy(np.sqrt((nn3[:, 1:] ** 2).mean(1)).astype(np.float32)).to(dev).clamp(min=1e-5)
+    if a.baseline == "mcmc":
+        scale0, opa0 = 0.1 * scale0, 0.5
 log(f"{int(seen.sum()):,} of {len(seen):,} points seen by a training frame; scale median {scale0.median().item() * 1000:.2f} mm "
     f"(depth/focal {(best_z / fx).median().item() * 1000:.2f} mm, half spacing {(0.5 * spacing).median().item() * 1000:.2f} mm)")
 
@@ -395,7 +437,8 @@ params = torch.nn.ParameterDict({
     "scales": torch.nn.Parameter(torch.log(scale0).unsqueeze(1).repeat(1, 3)),
     "quats": torch.nn.Parameter(quat_z_to(n0) if a.anchor else torch.tensor([1.0, 0, 0, 0], device=dev).repeat(len(pts), 1),
                                 requires_grad=not a.anchor),
-    "opacities": torch.nn.Parameter(torch.logit(torch.full((len(pts),), 0.1, device=dev))),
+    "opacities": torch.nn.Parameter(torch.logit(torch.full((len(pts),), 0.99 if a.opaque else opa0, device=dev)),
+                                    requires_grad=not a.opaque),
     "sh0": torch.nn.Parameter(((rgb - 0.5) / C0).unsqueeze(1)),
     "shN": torch.nn.Parameter(torch.zeros(len(pts), 15, 3, device=dev)),
 })
@@ -415,7 +458,7 @@ lrs = dict(means=1.6e-4 * scene_scale, scales=5e-3, quats=1e-3, opacities=5e-2, 
 if a.lamp_ambient:
     lrs["amb"] = 5e-3
 optimizers = {k: torch.optim.Adam([params[k]], lr=lr, eps=1e-15) for k, lr in lrs.items()
-              if not (a.anchor and k == "quats")}
+              if not (a.anchor and k == "quats") and not (a.opaque and k == "opacities")}
 if a.lamp:
     if a.eval_only:
         with torch.no_grad():
@@ -479,18 +522,34 @@ def neighbours(fid, ft):
 
 
 sched = torch.optim.lr_scheduler.ExponentialLR(optimizers["means"], gamma=0.01 ** (1.0 / a.iters))
-strategy = DefaultStrategy(refine_stop_iter=min(15000, a.iters // 2)) if a.adc else None
-state = strategy.initialize_state(scene_scale=scene_scale) if a.adc else None
-if a.adc:
+strategy = state = None
+if a.baseline == "mcmc":
+    strategy = MCMCStrategy(cap_max=len(pts), refine_stop_iter=min(25000, a.iters * 5 // 6))
+    state = strategy.initialize_state()
+elif a.adc:
+    strategy = DefaultStrategy(refine_stop_iter=min(15000, a.iters // 2),
+                               key_for_gradient="gradient_2dgs" if a.baseline == "2dgs" else "means2d")
+    state = strategy.initialize_state(scene_scale=scene_scale)
+if strategy is not None:
     strategy.check_sanity(params, optimizers)
+SH = [0 if a.baseline else 3]                   # SH degree in use (the baselines raise it every 1000 iterations)
 log(f"scene scale {scene_scale:.2f} m; ADC {'on' if a.adc else 'off'}; anchor {'on' if a.anchor else 'off'}; "
-    f"{a.iters} iterations")
+    f"{a.iters} iterations" + (f"; baseline {a.baseline}" if a.baseline else ""))
 
 
 def rasterize(view, mode="RGB+ED"):
     p = params
+    if a.baseline == "2dgs":                    # surfels; normals and distortion kept in info for the losses
+        if torch.is_grad_enabled() and mode == "RGB+ED":
+            mode = "RGB+D"                      # as gsplat's simple_trainer_2dgs (its ED backward fails here)
+        out, alpha, nrm, snrm, dist, _, info = gsplat.rasterization_2dgs(
+            p["means"], p["quats"], torch.exp(p["scales"]), torch.sigmoid(p["opacities"]),
+            torch.cat([p["sh0"], p["shN"]], 1), view[None], Kc[None], CW, CH, sh_degree=SH[0], packed=False,
+            render_mode=mode, near_plane=0.01, distloss=True)
+        info["n2d"], info["sn2d"], info["dist2d"] = nrm, snrm, dist
+        return out, alpha, info
     return gsplat.rasterization(p["means"], p["quats"], torch.exp(p["scales"]), torch.sigmoid(p["opacities"]),
-                                torch.cat([p["sh0"], p["shN"]], 1), view[None], Kc[None], CW, CH, sh_degree=3,
+                                torch.cat([p["sh0"], p["shN"]], 1), view[None], Kc[None], CW, CH, sh_degree=SH[0],
                                 packed=False, render_mode=mode, near_plane=0.01, **UT)
 
 
@@ -516,6 +575,8 @@ try:
         n = int(seq.pop())
         gt = IM[n].to(dev, non_blocking=True).float() / 255
         view = corrected(views_all[n], n)
+        if a.baseline:
+            SH[0] = min(it // 1000, 3)
         out, alpha, info = rasterize(view)
         if a.adc:
             strategy.step_pre_backward(params, optimizers, state, it, info)
@@ -532,10 +593,22 @@ try:
             ld = ((dep - Da).abs() / Da.clamp(min=1e-3))[md].mean() if md.any() else torch.zeros((), device=dev)
             loss = (1 - lam) * l1 + lam * (1 - ssim) + a.anchor_depth_w * ld
         else:
-            Ds = depth_map(view.detach(), t_of[n])
-            md = (Ds > 0) & VALID
-            ld = (dep - Ds).abs()[md].mean() if md.any() else torch.zeros((), device=dev)
-            loss = (1 - lam) * l1 + lam * (1 - ssim) + gam * ld
+            if gam > 0:
+                Ds = depth_map(view.detach(), t_of[n])
+                md = (Ds > 0) & VALID
+                ld = (dep - Ds).abs()[md].mean() if md.any() else torch.zeros((), device=dev)
+                loss = (1 - lam) * l1 + lam * (1 - ssim) + gam * ld
+            else:                               # baselines: no depth term (and no zero gradient into 2DGS depth)
+                ld = torch.zeros((), device=dev)
+                loss = (1 - lam) * l1 + lam * (1 - ssim)
+        if a.baseline == "mcmc":                # opacity and scale regularisation of 3DGS-MCMC
+            loss = loss + 0.01 * torch.sigmoid(params["opacities"]).mean() + 0.01 * torch.exp(params["scales"]).mean()
+        if a.baseline == "2dgs":                # normal consistency (from 7k) and depth distortion (from 3k)
+            if it > a.normal_start:
+                sn = info["sn2d"][0] * alpha[0].detach()
+                loss = loss + 0.05 * (1 - (info["n2d"][0] * sn).sum(-1)).mean()
+            if it > a.dist_start:
+                loss = loss + 0.01 * info["dist2d"].mean()
         if a.pose_opt:                          # weak priors: per frame a few mm / mrad, shared ~1 cm / 20 mrad
             loss = loss + 1e-4 * ((POSE["c"][n].norm() / 0.002) ** 2 + (POSE["w"][n].norm() / 0.002) ** 2
                                   + (POSE["cg"].norm() / 0.010) ** 2 + (POSE["wg"].norm() / 0.020) ** 2)
@@ -549,7 +622,9 @@ try:
                     opt.step()
                 opt.zero_grad(set_to_none=True)
         sched.step()
-        if a.adc:
+        if a.baseline == "mcmc":
+            strategy.step_post_backward(params, optimizers, state, it, info, lr=sched.get_last_lr()[0])
+        elif a.adc:
             strategy.step_post_backward(params, optimizers, state, it, info, packed=False)
         if a.anchor:
             with torch.no_grad():                  # stay within the clamp along the normal, stay thin
@@ -576,6 +651,7 @@ try:
 except torch.cuda.OutOfMemoryError as e:
     log(f"OUT OF MEMORY at iteration {done + 1} with {len(params['means']):,} Gaussians: {e}")
 torch.cuda.synchronize()
+SH[0] = 3                                       # scoring (and --eval-only) with the full SH degree
 train_s = time.time() - t_train
 peak = torch.cuda.max_memory_allocated() / 1e9
 if not a.eval_only:
