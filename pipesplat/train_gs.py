@@ -125,6 +125,8 @@ ap.add_argument("--baseline", choices=("3dgs", "mcmc", "2dgs"), default=None,
                      "(a stronger start than the sparse SfM points of the papers)")
 ap.add_argument("--normal-start", type=int, default=7000, help="--baseline 2dgs: normal consistency from this iteration")
 ap.add_argument("--dist-start", type=int, default=3000, help="--baseline 2dgs: depth distortion from this iteration")
+ap.add_argument("--dump", default=None,
+                help="scoring: write every scored frame as JPEGs into this folder - the model's render (gain/offset matched to the frame, as scored), and once per frame the video frame and B (for comparison videos, review/compare_video.py)")
 ap.add_argument("--opaque", action="store_true",
                 help="with --anchor: the surface discs are opaque (opacity fixed at 0.99, not learned) - one layer of "
                      "surfels instead of many semi-transparent ones (docs/10 5.5: median opacity 0.14 looks speckled "
@@ -816,6 +818,12 @@ def score(tag, imgs, nxt, views, B, Bm, ids, pos, times):
             rel = ((dep_c - Da).abs() / Da)[ma]
             row["depth_rel_err_surface"] = float(rel.median()) if len(rel) else np.nan
         rows.append(row)
+        if a.dump:
+            os.makedirs(a.dump, exist_ok=True)
+            for name, img in (("G", mats["G"]), ("real", real), ("B", mats["B"])):
+                fn = os.path.join(a.dump, f"{tag}_{int(ids[k]):06d}_{name}.jpg")
+                if name == "G" or not os.path.exists(fn):
+                    cv2.imwrite(fn, np.clip(img, 0, 255).astype(np.uint8)[:, :, ::-1], [cv2.IMWRITE_JPEG_QUALITY, 92])
         if a.save and k % a.save == 0 and not a.eval_only:
             trip = np.hstack([real, mats["B"], mats["G"]]).clip(0, 255).astype(np.uint8)
             cv2.imwrite(os.path.join(a.out, "renders", f"{tag}_{int(ids[k]):06d}.jpg"), trip[:, :, ::-1],
