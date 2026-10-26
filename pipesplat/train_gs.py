@@ -125,6 +125,11 @@ ap.add_argument("--baseline", choices=("3dgs", "mcmc", "2dgs"), default=None,
                      "(a stronger start than the sparse SfM points of the papers)")
 ap.add_argument("--normal-start", type=int, default=7000, help="--baseline 2dgs: normal consistency from this iteration")
 ap.add_argument("--dist-start", type=int, default=3000, help="--baseline 2dgs: depth distortion from this iteration")
+ap.add_argument("--alpha-w", type=float, default=0.0,
+                help="with --anchor: weight of a coverage term mean(1 - alpha) over the pixels where the measured surface "
+                     "is (docs/13 Z1). The pipe wall is opaque; with --lamp the near wall otherwise turns semi-transparent "
+                     "(docs/09 2.2: opacity > 0.99 on 74 %% instead of 89 %% of the pixels), i.e. the model darkens it "
+                     "through transparency instead of colour, which costs LPIPS")
 ap.add_argument("--dump", default=None,
                 help="scoring: write every scored frame as JPEGs into this folder - the model's render (gain/offset matched to the frame, as scored), and once per frame the video frame and B (for comparison videos, review/compare_video.py)")
 ap.add_argument("--opaque", action="store_true",
@@ -594,6 +599,8 @@ try:
             md = (Da > 0) & VALID
             ld = ((dep - Da).abs() / Da.clamp(min=1e-3))[md].mean() if md.any() else torch.zeros((), device=dev)
             loss = (1 - lam) * l1 + lam * (1 - ssim) + a.anchor_depth_w * ld
+            if a.alpha_w > 0 and md.any():      # the wall is opaque: no darkening through transparency
+                loss = loss + a.alpha_w * (1 - alpha[0, ..., 0])[md].mean()
         else:
             if gam > 0:
                 Ds = depth_map(view.detach(), t_of[n])

@@ -13,20 +13,24 @@ import paths  # noqa: E402
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 G = os.path.join(paths.GS_ROOT, "g0")
-SETS = [  # data set, title, [(run, label, kind)]  kind: base / pub / ours_old (10-21) / ours (best now) / ours_try (variant)
+SETS = [  # data set, title, [(run, label, kind)]  kind: base / pub / ours_old (earlier best) / ours (best now) / ours_try (variant)
     ("concrete_2", "concrete_2（Sheffield 混凝土管）",
      [("run_3dgs", "3DGS", "pub"), ("run_mcmc", "3DGS-MCMC（gsplat 默认参数，训练发散）", "pub"), ("run_2dgs", "2DGS", "pub"),
-      ("run_g0a", "本项目 G0-A（当前最好）", "ours"), ("run_g0a_opaque", "本项目 G0-A 不透明面元（Y4，未采用）", "ours_try"),
-      ("run_g0a_pose", "本项目 G0-A + 位姿精修（未采用）", "ours_try")]),
+      ("run_g0a", "本项目 G0-A（docs/11 最好）", "ours_old"), ("run_g0a_opaque", "本项目 G0-A 不透明面元（Y4，未采用）", "ours_try"),
+      ("run_g0a_pose", "本项目 G0-A + 位姿精修（未采用）", "ours_try"),
+      ("run_g0al_a01", "本项目 G0-A + 车灯模型 + 覆盖项（Z1，当前最好）", "ours")]),
     ("concrete_lab", "实验室管 A（独立检验）",
      [("run_3dgs", "3DGS", "pub"), ("run_mcmc", "3DGS-MCMC", "pub"), ("run_2dgs", "2DGS（种子 0：数值发散，NaN）", "pub"),
-      ("run_2dgs_s1", "2DGS（种子 1：同样发散）", "pub"), ("run_g0a", "本项目 G0-A", "ours")]),
+      ("run_2dgs_s1", "2DGS（种子 1：同样发散）", "pub"), ("run_g0a", "本项目 G0-A（docs/11）", "ours_old"),
+      ("run_g0al_a01", "本项目 G0-A + 车灯模型 + 覆盖项（Z1，当前最好）", "ours")]),
     ("inpipe_vision", "InPipe 172011（激光 + 视觉）",
      [("run_3dgs", "3DGS", "pub"), ("run_mcmc", "3DGS-MCMC", "pub"), ("run_2dgs", "2DGS", "pub"),
-      ("run_g0ala_s20", "本项目 X7（10-21 最好）", "ours_old"), ("run_vhf", "本项目 Y1（视觉高度场管壁）", "ours")]),
+      ("run_g0ala_s20", "本项目 X7（10-21 最好）", "ours_old"), ("run_vhf", "本项目 Y1（视觉高度场管壁，当前最好）", "ours"),
+      ("run_vhf_a01", "本项目 Y1 + 覆盖项（Z1，持平，未采用）", "ours_try")]),
     ("sewer_pipe1", "Pipe1 真实污水管（前 10 m）",
      [("run_3dgs", "3DGS", "pub"), ("run_mcmc", "3DGS-MCMC", "pub"), ("run_2dgs", "2DGS", "pub"),
-      ("run_g0a", "本项目 G0-A，锚定在 OpenMVS 网格（对照）", "ours_try"), ("run_vhf", "本项目 Y3（视觉高度场管壁）", "ours")]),
+      ("run_g0a", "本项目 G0-A，锚定在 OpenMVS 网格（对照）", "ours_try"), ("run_vhf", "本项目 Y3（视觉高度场管壁，当前最好）", "ours"),
+      ("run_vhf_l_a01", "本项目 Y3 + 车灯模型 + 覆盖项（Z1，变差，未采用）", "ours_try")]),
 ]
 B_LABEL = {"concrete_2": "OpenMVS 网格贴图 × 灯光图（v1.0 = B）", "concrete_lab": "OpenMVS 网格贴图 × 灯光图（v1.0 = B）",
            "inpipe_vision": "激光高度场 R3 + R4 贴图 × 灯光图（v1.0 = B）",

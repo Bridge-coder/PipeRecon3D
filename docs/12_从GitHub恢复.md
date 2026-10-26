@@ -81,6 +81,7 @@ WSL 的 shell 脚本通过 `pipesplat/env.sh` 取这些路径。本次用到的�
 
 ```bash
 gh release download v2.0-results --repo Bridge-coder/PipeRecon3D --dir D:/dl/v2.0
+gh release download v2.1-results --repo Bridge-coder/PipeRecon3D --dir D:/dl/v2.1     # 第二轮的新模型（docs/13）
 gh release download v1.0-results --repo Bridge-coder/PipeRecon3D --dir D:/dl/v1.0 -p sheffield_concrete_2.zip -p concrete_lab.zip -p sewer_pipe1.zip
 ```
 
@@ -94,6 +95,8 @@ gh release download v1.0-results --repo Bridge-coder/PipeRecon3D --dir D:/dl/v1.
 | `<数据>_intermediates.zip`（v2.0） | `GS_ROOT` | `g0/<数据>/` 下的管壁、中心线、网格、导出记录 |
 | `inpipe_172011_scene.zip`（v2.0） | `GS_ROOT` | `g0/inpipe_vision/scene.npz`：InPipe 的场景（训练图像、留出帧、B 渲染、位姿），不用再导出 |
 | `<数据>_gaussians_*.zip`（v2.0） | `GS_ROOT/g0/<场景>/` | 再把解出的文件夹改名为训练名：concrete_2、concrete_lab → `run_g0a`；InPipe → `g0/inpipe_vision/run_vhf`；Pipe1 → `run_vhf` |
+| `concrete_2_gaussians_z1.zip`、`concrete_lab_gaussians_z1.zip`（v2.1，这两段现在最好的模型） | `GS_ROOT/g0/<场景>/` | 改名为 `run_g0al_a01`；场景和实测表面与 v2.0 的 G0-A 相同（中间文件包、第 6 节的导出） |
+| `inpipe_172011_baked_mesh_z2_two_light.zip`（v2.1） | 任意位置 | 可重新打光的 InPipe 网格：`albedo.png`、`ambient.png`、`lamp.npz`（docs/13 第 4 节）；普通查看器仍用 v2.0 的 Y2 |
 | `<数据>_baked_mesh_*.zip`（v2.0） | 任意位置 | 直接用 MeshLab / Blender 打开 `model.obj` |
 | `sheffield_concrete_2.zip`（v1.0） | `WORK_SHEFFIELD` | 把解出的 `sheffield_concrete_2/` 改名为 `concrete_2/` |
 | `concrete_lab.zip`（v1.0） | `WORK_NEW` | `concrete_lab/` |
@@ -139,15 +142,15 @@ python -I pipesplat/export_inpipe_vision.py <GS_ROOT>/g0/inpipe_172011 <GS_ROOT>
 **重新评分**（WSL；每个模型按它自己 summary 里的参数评分，打印新旧对比）：
 
 ```bash
-wsl -d pipe3d -u root -- /opt/gsenv/bin/python /mnt/<盘>/<路径>/PipeRecon3D/pipesplat/rescore.py concrete_2/run_g0a concrete_lab/run_g0a inpipe_vision/run_vhf sewer_pipe1/run_vhf
+wsl -d pipe3d -u root -- /opt/gsenv/bin/python /mnt/<盘>/<路径>/PipeRecon3D/pipesplat/rescore.py concrete_2/run_g0al_a01 concrete_lab/run_g0al_a01 inpipe_vision/run_vhf sewer_pipe1/run_vhf
 ```
 
 **重新训练**（WSL；一次只跑一个；换个训练名，免得覆盖下载的模型）：
 
 | 模型 | 命令（在 `pipesplat/review/` 下，`run_f2.sh 数据 训练名 选项`） |
 |---|---|
-| concrete_2 G0-A | `bash run_f2.sh concrete_2 run_g0a_new --anchor` |
-| 实验室管 A G0-A | `bash run_f2.sh concrete_lab run_g0a_new --anchor --points-every 2` |
+| concrete_2 Z1（docs/13） | `bash run_f2.sh concrete_2 run_g0al_a01_new --anchor --lamp --lamp-smooth-mm 20 --alpha-w 0.1` |
+| 实验室管 A Z1 | `bash run_f2.sh concrete_lab run_g0al_a01_new --anchor --points-every 2 --lamp --lamp-smooth-mm 20 --alpha-w 0.1` |
 | InPipe Y1 | `bash run_f2.sh inpipe_vision run_vhf_new --anchor --lamp --lamp-ambient --lamp-smooth-mm 20 --surface surface_vhf.npz` |
 | Pipe1 Y3 | `bash run_f2.sh sewer_pipe1 run_vhf_new --anchor --surface surface_vhf.npz` |
 

@@ -27,6 +27,19 @@ the texture is the (u, theta) grid itself, every texel's surface point is center
    texture (bilinear), times a camera-fixed lamp map learnt on training frames (lampmap.learn_lamp_map's recipe,
    "x lamp map" = B's recipe), then the frame's gain + offset. summary_r2.json in summarize_r2.py's layout.
 
+--two-light (docs/13 Z2; a --lamp --lamp-ambient model, InPipe Y1): the frames are lit by the robot's lamp (follows the
+camera, 1/r^2) and by the room light through the slot and the open end (follows the world); one static texture times
+a camera-fixed lamp map cannot hold both (docs/11 sec 8, item 1). The model's own decomposition is used instead:
+frame = gain_n x (L x albedo + ambient) + offset_n with L = the model's lamp factor (camera-fixed map M x cos / (r /
+r_ref)^2, train_gs.py) and gain_n / offset_n the model's exposure of training frame n.
+  ambient E: the model's per-Gaussian ambient colour rendered in every training view, averaged per texel (all views);
+  albedo A: from the video, least squares per texel over the near views (weights as pass 2b near):
+            A = sum w L (y' - E) / sum w L^2 with y' = (frame - offset_n) / gain_n.
+  albedo.png + ambient.png (+ lamp.npz: M, lamp offset, r_ref) are the relightable mesh; texture.png = A x L_typ + E
+  (L_typ the median lamp factor of the near views) is the static look for viewers without a headlight.
+  Scored twice: summary_r2.json = the mesh with the model's headlight (L x A + E, then the frame's gain + offset as
+  every model), summary_r2_static.json = texture.png x a camera-fixed lamp map (the recipe above, comparable with Y2).
+
 usage: TORCH_HOME=<TORCH_CACHE of scripts/paths.py> /opt/gsenv/bin/python pipesplat/bake_vhf.py SCENE_DIR MODEL_RUN OUT_DIR
            [--name vhf] [--texel-mm 0.5] [--near-tau 1] [--ref-z auto] [--lp-mm 12] [--alpha-min 0.95] [--far 1.2]
 """
@@ -35,6 +48,7 @@ import csv
 import json
 import math
 import os
+import re
 import sys
 import time
 
@@ -70,6 +84,8 @@ ap.add_argument("--flat-iters", type=int, default=1,
 ap.add_argument("--edge-px", type=float, default=30.0, help="samples closer than this to the frame border weigh less")
 ap.add_argument("--source", choices=("video", "model"), default="video",
                 help="texel colours from the raw training frames (default) or from the Gaussian model's renders")
+ap.add_argument("--two-light", action="store_true",
+                help="albedo + ambient textures with the model's lamp (see the module docstring); --source video, no flat field")
 a = ap.parse_args()
 dev = "cuda"
 os.makedirs(os.path.join(a.out, "renders"), exist_ok=True)
@@ -126,6 +142,14 @@ sv = torch.load(os.path.join(a.run, "model.pt"))
 assert tuple(int(v) for v in sv["size"]) == (CW, CH), "canvas differs from the model's"
 GS = {k: sv[k].to(dev) for k in ("means", "quats", "scales", "opacities", "sh0", "shN")}
 lamp_model = "lamp_logM" in sv
+if a.two_light:
+    assert lamp_model and "amb" in sv, "--two-light needs a --lamp --lamp-ambient model (train_gs.py)"
+    assert a.source == "video", "--two-light bakes the albedo from the video"
+    a.flat_iters = 0                            # the lamp model replaces the flat field
+    LP = {k: sv["lamp_" + k].to(dev) for k in ("logM", "t", "gain", "off")}
+    AMB = torch.sigmoid(sv["amb"].to(dev))
+    mr = re.search(r"r_ref (\d+(?:\.\d+)?) mm", open(os.path.join(a.run, "train.log"), encoding="utf-8").read())
+    R_REF = float(mr.group(1)) / 1000
 del sv
 log(f"raw {w}x{h} k1 {k1}, canvas {CW}x{CH}; model {a.run}: {len(GS['means']):,} Gaussians"
     + (" (--lamp model)" if lamp_model else "") + f"; colours from the {a.source}")
@@ -137,6 +161,27 @@ def render_model(view):
                                       torch.cat([GS["sh0"], GS["shN"]], 1), view[None], Kc[None], CW, CH, sh_degree=3,
                                       packed=False, render_mode="RGB+ED", near_plane=0.01)
     return out[0, ..., :3].clamp(0, 1), out[0, ..., 3], al[0, ..., 0]
+
+
+@torch.no_grad()
+def render_ambient(view):
+    """the model's per-Gaussian ambient colour on the canvas (train_gs.py ambient())"""
+    out, _, _ = gsplat.rasterization(GS["means"], GS["quats"], torch.exp(GS["scales"]), torch.sigmoid(GS["opacities"]),
+                                     AMB, view[None], Kc[None], CW, CH, packed=False, render_mode="RGB", near_plane=0.01)
+    return out[0]
+
+
+def lamp_L(Xc, nc):
+    """the model's lamp factor M x cos(incidence) / (r / r_ref)^2 (train_gs.py lamp_factor) at camera-frame points Xc with
+    unit normals nc; M bilinear on the canvas as train_gs.py (align_corners)"""
+    z = Xc[:, 2].clamp(min=1e-6)
+    px, py = ccx + fx * Xc[:, 0] / z, ccy + fy * Xc[:, 1] / z
+    g = torch.stack([px / (CW - 1) * 2 - 1, py / (CH - 1) * 2 - 1], -1).view(1, 1, -1, 2)
+    M = torch.exp(F.grid_sample(LP["logM"], g, align_corners=True, padding_mode="border")).view(-1)
+    Lv = LP["t"] - Xc
+    r = Lv.norm(dim=1).clamp(min=1e-3)
+    cos = ((nc * Lv).sum(1) / r).abs().clamp(min=0.05)
+    return M * cos / (r / R_REF) ** 2
 
 
 # ------------------------------------------------------------------------------ height field + centerline ----
@@ -371,11 +416,34 @@ def render_mesh(view):
     return out.mul(255).cpu().numpy(), ok.cpu().numpy()
 
 
-def learn_lamp():
-    """camera-fixed gain map (lampmap.learn_lamp_map's recipe) of the current texture against the raw training frames"""
+@torch.no_grad()
+def render_mesh_two(view):
+    """--two-light: the mesh with the model's headlight, L x albedo + ambient per pixel (same rasteriser as render_mesh)"""
+    D, face = MR(view)
+    ok = (face >= 0) & VR
+    Xc = torch.stack([RX * D, RY * D, D], -1)[ok]
+    R, t = view[:3, :3], view[:3, 3]
+    Xw = (Xc - t) @ R
+    out = torch.zeros(h, w, 3, device=dev)
+    for s in range(0, len(Xw), 400000):
+        u, th = to_pipe(Xw[s:s + 400000])
+        g = torch.stack([(u - U0) / (UT1 - U0) * 2 - 1, (th + math.pi) / (2 * math.pi) * 2 - 1], -1)[None, None]
+        A = F.grid_sample(TEXA[0].permute(2, 0, 1)[None], g, align_corners=False, padding_mode="border")[0, :, 0].T
+        E = F.grid_sample(TEXE[0].permute(2, 0, 1)[None], g, align_corners=False, padding_mode="border")[0, :, 0].T
+        C, N, Bn = cl_frame(u)
+        rad = torch.cos(th + th0)[:, None] * N + torch.sin(th + th0)[:, None] * Bn
+        L = lamp_L(Xc[s:s + 400000], rad @ R.T)
+        idx = torch.nonzero(ok.view(-1))[s:s + 400000, 0]
+        out.view(-1, 3)[idx] = L[:, None] * A + E
+    return out.mul(255).cpu().numpy(), ok.cpu().numpy()
+
+
+def learn_lamp(render=None):
+    """camera-fixed gain map (lampmap.learn_lamp_map's recipe) of the current texture (or of render) against the raw
+    training frames"""
     lm_acc, lm_cnt = np.zeros((h, w)), np.zeros((h, w))
     for n in train[::4]:
-        G, ok = render_mesh(views_all[int(n)])
+        G, ok = (render or render_mesh)(views_all[int(n)])
         real = raw_train[int(n)].astype(np.float32)
         m = ok & valid_raw
         g = im.linear_match(G, real, m)
@@ -421,6 +489,55 @@ def bake_once():
     return near, ref, seen
 
 
+def bake_two():
+    """--two-light: albedo (least squares over the near views, the model's lamp factor and exposure known) and ambient
+    (the model's ambient render, mean over all views); returns albedo, ambient (rows = theta), seen, typical lamp factor"""
+    fp_best = torch.full((NT,), float("inf"), device=dev)
+    t_b = time.time()
+    for n, uc in cams:
+        cols, lo = cols_for(uc)
+        if len(cols) == 0:
+            continue
+        _, fp, _, ok, _ = project_view(views_all[n], cols, n)
+        sl = slice(lo * NTH, lo * NTH + len(cols) * NTH)
+        fp_best[sl] = torch.minimum(fp_best[sl], torch.where(ok, fp, torch.full_like(fp, float("inf"))))
+    acc_a, w_a = torch.zeros(NT, 3, device=dev), torch.zeros(NT, device=dev)
+    acc_e, w_e = torch.zeros(NT, 3, device=dev), torch.zeros(NT, device=dev)
+    acc_l, w_l = torch.zeros(NT, device=dev), torch.zeros(NT, device=dev)
+    for n, uc in cams:
+        cols, lo = cols_for(uc)
+        if len(cols) == 0:
+            continue
+        view = views_all[n]
+        c, fp, z, ok, we = project_view(view, cols, n)
+        X, nrm, _ = texel_points(cols)
+        R, t = view[:3, :3], view[:3, 3]
+        Xc = X @ R.T + t
+        L = lamp_L(Xc, nrm @ R.T)
+        zc = Xc[:, 2].clamp(min=1e-6)
+        g = torch.stack([(ccx + fx * Xc[:, 0] / zc) / (CW - 1) * 2 - 1, (ccy + fy * Xc[:, 1] / zc) / (CH - 1) * 2 - 1], -1)
+        E = F.grid_sample(render_ambient(view).permute(2, 0, 1)[None], g[None, None], align_corners=True)[0, :, 0].T
+        y = (c - LP["off"][n]) / torch.exp(LP["gain"][n])          # the frame without the model's exposure
+        sl = slice(lo * NTH, lo * NTH + len(cols) * NTH)
+        wn_ = torch.where(ok, we * torch.exp(-(fp / fp_best[sl] - 1) / a.near_tau), torch.zeros_like(fp))
+        acc_a[sl] += (wn_ * L)[:, None] * (y - E)
+        w_a[sl] += wn_ * L ** 2
+        we_ = torch.where(ok, we, torch.zeros_like(fp))
+        acc_e[sl] += we_[:, None] * E
+        w_e[sl] += we_
+        acc_l[sl] += wn_ * L
+        w_l[sl] += wn_
+    seen_t = w_a > 0
+    L_typ = float((acc_l[seen_t] / w_l[seen_t]).median())
+    lay = lambda v: v.view(NU, NTH, -1).permute(1, 0, 2).cpu().numpy()  # noqa: E731
+    alb = lay(acc_a / w_a.clamp(min=1e-12)[:, None])
+    amb = lay(acc_e / w_e.clamp(min=1e-12)[:, None])
+    log(f"two-light bake over {len(cams)} training views: {seen_t.float().mean().item():.1%} of the texels seen; "
+        f"albedo p50 {np.median(alb[lay(seen_t[:, None])[..., 0]]):.3f}, ambient p50 {np.median(amb[lay(seen_t[:, None])[..., 0]]):.3f}, "
+        f"typical lamp factor {L_typ:.2f} (r_ref {R_REF * 1000:.0f} mm) [{time.time() - t_b:.0f} s]")
+    return alb, amb, lay(seen_t[:, None])[..., 0], L_typ
+
+
 def fill(img, m):
     """push-pull fill of the texels not in m (rows = theta, wrapping if the tube is closed)"""
     out = img.copy()
@@ -448,26 +565,51 @@ def blur(img, s):
     return cv2.GaussianBlur(img, (0, 0), s, borderType=cv2.BORDER_REFLECT)
 
 
-s_lp = a.lp_mm / a.texel_mm
-for it_f in range(a.flat_iters + 1):
-    near, ref, seen = bake_once()
-    near_f, ref_f = fill(near, seen), fill(ref, seen)
-    tex = near_f * blur(ref_f, s_lp) / np.maximum(blur(near_f, s_lp), 1e-4) if a.lp_mm > 0 else near_f
-    tex = np.clip(tex, 0, None)
+TEXA, TEXE = [None], [None]                             # --two-light: albedo and ambient as drawn (the PNGs)
+extra = {}
+if a.two_light:
+    alb, amb, seen, L_typ = bake_two()
+    alb_f, amb_f = np.clip(fill(alb, seen), 0, None), np.clip(fill(amb, seen), 0, None)
+    sA = 250.0 / max(float(np.percentile(alb_f, 99.5)), 1e-6)
+    sE = 250.0 / max(float(np.percentile(amb_f, 99.5)), 1e-6)
+    pngA = np.clip(alb_f * sA, 0, 255).round().astype(np.uint8)
+    pngE = np.clip(amb_f * sE, 0, 255).round().astype(np.uint8)
+    TEXA[0] = torch.from_numpy(pngA.astype(np.float32) / sA).to(dev)
+    TEXE[0] = torch.from_numpy(pngE.astype(np.float32) / sE).to(dev)
+    tex = pngA.astype(np.float32) / sA * L_typ + pngE.astype(np.float32) / sE      # the static look
     scale = 250.0 / max(float(np.percentile(tex, 99.5)), 1e-6)
     png = np.clip(tex * scale, 0, 255).round().astype(np.uint8)
-    TEXc[0] = torch.from_numpy(png.astype(np.float32) / 255).to(dev)    # what is drawn and scored = the PNG
-    if it_f < a.flat_iters and a.source == "video":
-        LMf = learn_lamp()                      # the frames' camera-fixed shading against this texture
-        FLAT[0] = torch.from_numpy((LMf / np.median(LMf)).astype(np.float32)).to(dev)
-        log(f"flat field {it_f + 1}: camera-fixed gain p5..p95 {np.percentile(LMf / np.median(LMf), 5):.2f}.."
-            f"{np.percentile(LMf / np.median(LMf), 95):.2f}; the frames are divided by it and baked again")
-    elif it_f < a.flat_iters:
-        break
+    TEXc[0] = torch.from_numpy(png.astype(np.float32) / 255).to(dev)
+    cv2.imwrite(os.path.join(a.out, "obj", "albedo.png"), pngA[:, :, ::-1])
+    cv2.imwrite(os.path.join(a.out, "obj", "ambient.png"), pngE[:, :, ::-1])
+    np.savez(os.path.join(a.out, "obj", "lamp.npz"), logM=LP["logM"][0, 0].cpu().numpy(), t=LP["t"].cpu().numpy(),
+             r_ref=R_REF, K=Kc.cpu().numpy(), size=np.array([CW, CH]))
+    extra = dict(two_light=dict(albedo_scale=sA, ambient_scale=sE, L_typ=L_typ, r_ref=R_REF,
+                                note="colour = L x albedo.png / albedo_scale + ambient.png / ambient_scale, L = M x cos / "
+                                     "(r / r_ref)^2 with M (camera-fixed, logM on the canvas grid, bilinear with "
+                                     "align_corners) and the lamp offset t (camera frame) of lamp.npz; texture.png = "
+                                     "L_typ x albedo + ambient (scale)"))
+else:
+    s_lp = a.lp_mm / a.texel_mm
+    for it_f in range(a.flat_iters + 1):
+        near, ref, seen = bake_once()
+        near_f, ref_f = fill(near, seen), fill(ref, seen)
+        tex = near_f * blur(ref_f, s_lp) / np.maximum(blur(near_f, s_lp), 1e-4) if a.lp_mm > 0 else near_f
+        tex = np.clip(tex, 0, None)
+        scale = 250.0 / max(float(np.percentile(tex, 99.5)), 1e-6)
+        png = np.clip(tex * scale, 0, 255).round().astype(np.uint8)
+        TEXc[0] = torch.from_numpy(png.astype(np.float32) / 255).to(dev)    # what is drawn and scored = the PNG
+        if it_f < a.flat_iters and a.source == "video":
+            LMf = learn_lamp()                      # the frames' camera-fixed shading against this texture
+            FLAT[0] = torch.from_numpy((LMf / np.median(LMf)).astype(np.float32)).to(dev)
+            log(f"flat field {it_f + 1}: camera-fixed gain p5..p95 {np.percentile(LMf / np.median(LMf), 5):.2f}.."
+                f"{np.percentile(LMf / np.median(LMf), 95):.2f}; the frames are divided by it and baked again")
+        elif it_f < a.flat_iters:
+            break
 cv2.imwrite(os.path.join(a.out, "obj", "texture.png"), png[:, :, ::-1])
 json.dump(dict(u0=U0, u1=UT1, du=du, nth=NTH, dth=dth, scale=scale, seen=float(seen.mean()), closed=bool(closed),
                note="texture.png: column c covers u = u0 + c du, row r covers theta = -pi + r dth (the centerline's "
-                    "frame, theta as vision_surface.py)", run=a.run),
+                    "frame, theta as vision_surface.py)", run=a.run, **extra),
           open(os.path.join(a.out, "texture.json"), "w"), indent=1)
 log(f"texture {png.shape[1]} x {png.shape[0]}: seen {seen.mean():.1%} of the texels (rest filled), scale {scale:.1f}")
 
@@ -504,11 +646,10 @@ np.save(os.path.join(a.out, "lamp_map.npy"), np.log(LM).astype(np.float32))
 log(f"lamp map from {len(train[::4])} training frames: gain p5..p95 {np.percentile(LM, 5):.2f}..{np.percentile(LM, 95):.2f}")
 
 
-def score(tag, imgs, nxt, views, B, Bm, ids, pos):
+def score(tag, imgs, nxt, views, B, Bm, ids, pos, render, sub):
     rows = []
     for k in range(len(ids)):
-        G, ok = render_mesh(torch.from_numpy(views[k]).to(dev))
-        G = G * LM[..., None]
+        G, ok = render(torch.from_numpy(views[k]).to(dev))
         real = imgs[k].astype(np.float32)
         m = Bm[k] & valid_raw
         row = dict(tag=tag, frame=int(ids[k]), pos=float(pos[k]), coverage=float(m.mean()), cov_G=float(ok.mean()),
@@ -526,36 +667,55 @@ def score(tag, imgs, nxt, views, B, Bm, ids, pos):
         rows.append(row)
         if a.save and k % a.save == 0:
             trip = np.hstack([real, mats["B"], mats["G"]]).clip(0, 255).astype(np.uint8)
-            cv2.imwrite(os.path.join(a.out, "renders", f"{tag}_{int(ids[k]):06d}.jpg"), trip[:, :, ::-1],
+            cv2.imwrite(os.path.join(a.out, "renders", f"{tag}{sub}_{int(ids[k]):06d}.jpg"), trip[:, :, ::-1],
                         [cv2.IMWRITE_JPEG_QUALITY, 92])
         log(f"  {tag} {k + 1}/{len(ids)} frame {int(ids[k])}: PSNR mesh {row['G_psnr']:.2f} B {row['B_psnr']:.2f} "
             f"Nal {row['Nal_psnr']:.2f} | fid fine mesh {row['G_fid_fine']:.3f} B {row['B_fid_fine']:.3f}")
     return rows
 
 
-rng = d["block_ranges"]
-in_block = lambda p: bool(np.any([(p >= lo) & (p < hi) for lo, hi in rng]))  # noqa: E731
-rows = score("held", d["held_images"], d["held_next"], d["held_viewmats"], d["held_B"], d["held_mask"], d["held_ids"],
-             d["held_pos"])
-for r in rows:
-    r["in_block"] = in_block(r["pos"])
-bi = d["block_idx"]
-rows_b = score("block", raw_train[bi], d["block_next"], d["block_viewmats"], d["block_B"], d["block_mask"],
-               d["block_ids"], d["train_pos"][bi])
-for r in rows_b:
-    r["in_block"] = True
-keys = [k for k in rows[0] if k not in ("tag", "frame", "in_block")]
-with open(os.path.join(a.out, "per_frame_r2.csv"), "w", newline="", encoding="utf-8") as fh:
-    wr_ = csv.DictWriter(fh, ["tag", "frame", "in_block"] + keys)
-    wr_.writeheader()
-    wr_.writerows(rows + rows_b)
-med = lambda rs: {k: float(np.nanmedian([r[k] for r in rs])) for k in keys} if rs else {}  # noqa: E731
-summary = dict(scene=a.scene, args=vars(a), model=f"baked mesh ({a.name}) from {a.run}", texture=[NTH, NU],
-               held_all=med(rows), held_outside_blocks=med([r for r in rows if not r["in_block"]]), block=med(rows_b))
-json.dump(summary, open(os.path.join(a.out, "summary_r2.json"), "w"), indent=1)
-M = ("psnr", "lpips", "shift_px", "fid_fine", "fid_mid", "fid_coarse", "en_fine", "mse_low")
-for title, s in (("in-sequence held-out, outside the blocks", summary["held_outside_blocks"]), ("block frames", summary["block"])):
-    log(f"\n{title} (median, ruler v2):")
-    for tag, name in (("G", "baked mesh"), ("B", "lampmap B"), ("Nal", "next frame aligned"), ("D", "frame denoised")):
-        log(f"  {name:18s} " + "  ".join(f"{k} {s[f'{tag}_{k}']:.3f}" for k in M))
+def evaluate(render, suffix, label):
+    """held-out and block frames scored with render (view -> image, coverage): per_frame_r2<suffix>.csv, summary_r2<suffix>.json"""
+    rng = d["block_ranges"]
+    in_block = lambda p: bool(np.any([(p >= lo) & (p < hi) for lo, hi in rng]))  # noqa: E731
+    rows = score("held", d["held_images"], d["held_next"], d["held_viewmats"], d["held_B"], d["held_mask"], d["held_ids"],
+                 d["held_pos"], render, suffix)
+    for r in rows:
+        r["in_block"] = in_block(r["pos"])
+    bi = d["block_idx"]
+    rows_b = score("block", raw_train[bi], d["block_next"], d["block_viewmats"], d["block_B"], d["block_mask"],
+                   d["block_ids"], d["train_pos"][bi], render, suffix)
+    for r in rows_b:
+        r["in_block"] = True
+    keys = [k for k in rows[0] if k not in ("tag", "frame", "in_block")]
+    with open(os.path.join(a.out, f"per_frame_r2{suffix}.csv"), "w", newline="", encoding="utf-8") as fh:
+        wr_ = csv.DictWriter(fh, ["tag", "frame", "in_block"] + keys)
+        wr_.writeheader()
+        wr_.writerows(rows + rows_b)
+    med = lambda rs: {k: float(np.nanmedian([r[k] for r in rs])) for k in keys} if rs else {}  # noqa: E731
+    summary = dict(scene=a.scene, args=vars(a), model=f"{label} ({a.name}) from {a.run}", texture=[NTH, NU],
+                   held_all=med(rows), held_outside_blocks=med([r for r in rows if not r["in_block"]]), block=med(rows_b))
+    json.dump(summary, open(os.path.join(a.out, f"summary_r2{suffix}.json"), "w"), indent=1)
+    M = ("psnr", "lpips", "shift_px", "fid_fine", "fid_mid", "fid_coarse", "en_fine", "mse_low")
+    for title, s in (("in-sequence held-out, outside the blocks", summary["held_outside_blocks"]), ("block frames", summary["block"])):
+        log(f"\n{label}: {title} (median, ruler v2):")
+        for tag, name in (("G", "baked mesh"), ("B", "lampmap B"), ("Nal", "next frame aligned"), ("D", "frame denoised")):
+            log(f"  {name:18s} " + "  ".join(f"{k} {s[f'{tag}_{k}']:.3f}" for k in M))
+
+
+def render_static(view):
+    G, ok = render_mesh(view)
+    return G * LM[..., None], ok
+
+
+if a.two_light:
+    evaluate(render_mesh_two, "", "baked mesh with the model's headlight (L x albedo + ambient)")
+    evaluate(render_static, "_static", "baked mesh, static texture x camera-fixed lamp map")
+    LM2 = learn_lamp(render_mesh_two)           # what the headlight misses and stays on the screen: the lamp's highlight
+    np.save(os.path.join(a.out, "lamp_map_headlight.npy"), np.log(LM2).astype(np.float32))
+    log(f"camera-fixed map on top of the headlight: gain p5..p95 {np.percentile(LM2, 5):.2f}..{np.percentile(LM2, 95):.2f}")
+    evaluate(lambda v: (lambda g: (g[0] * LM2[..., None], g[1]))(render_mesh_two(v)), "_lm",
+             "baked mesh with the headlight x camera-fixed lamp map")
+else:
+    evaluate(render_static, "", "baked mesh")
 log("done")
