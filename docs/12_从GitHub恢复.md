@@ -19,8 +19,9 @@
 ```bash
 git clone https://github.com/Bridge-coder/PipeRecon3D.git
 cd PipeRecon3D
-git checkout explore          # v2.0 的代码（pipesplat/、docs/06-12）在 explore 分支；master 是 v1.0
 ```
+
+v2.0 的代码（`pipesplat/`、docs/06–12）在 2026-10-26 已合并进 master，克隆后默认就是最新版。explore 分支保留，内容与 master 相同。
 
 ## 3. 环境
 

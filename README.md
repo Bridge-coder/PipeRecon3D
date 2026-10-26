@@ -2,15 +2,26 @@
 
 管道机器人的**单目视频** → 运动估计（SfM）→ 稠密点云 → 网格 → 纹理；
 有**激光雷达**时，再做时间同步、外参标定和尺度融合，最终得到**公制、管壁厚度约 5 mm 的高度场网格 + 逐像素贴图**模型。
+**v2.0（2026-10，最新）**在这些位姿和几何之上，训练**锚定在实测管壁上的高斯模型**，再烘焙成可直接打开的带贴图网格。
+在训练时拿掉的帧上，它的 PSNR 比 v1.0 模型和 3DGS / 2DGS 都高（第 1.1 节）。
 
-全部代码是 Python（只依赖 numpy / OpenCV / matplotlib / Pillow），重建核心调用 OpenMVG 1.6 + OpenMVS 2.4.0 的 Windows 预编译程序。
+v1.0 部分全部是 Python（只依赖 numpy / OpenCV / matplotlib / Pillow），重建核心调用 OpenMVG 1.6 + OpenMVS 2.4.0 的 Windows 预编译程序；
+v2.0 的高斯模型在 WSL（Ubuntu 24.04）里用 PyTorch 2.9 + gsplat 1.6 训练（`pipesplat/`，环境安装脚本在 `pipesplat/setup/`）。
 
 | 分支 | 输入 | 输出 | 已验证的数据 |
 |---|---|---|---|
 | 视觉（运动估计 → 稠密 → 网格 → 纹理） | 任意管道视频（需相机内参） | 带纹理 OBJ、稠密点云、相机轨迹、三维视图、对比视频 | Sheffield Minicam 混凝土管 5 段、15 m 混合管网；新视频测试：实验室混凝土管（新一次行走）、真实地下污水管 Pipe1（换相机） |
 | 激光 + 视觉融合（F1–F5）+ 最终模型（R1–R5） | ROS 2 bag：3D 激光雷达 + 彩色相机 + IMU + 轮式编码器 | 公制融合轨迹、外参、高度场网格 + 逐像素贴图 OBJ、局部偏差图、六格对比视频 | InPipe-SLAM 序列 172011（禾赛 128 线 + RealSense） |
+| **v2.0 锚定高斯**（`pipesplat/`） | 上面两个分支的位姿、网格 / 稠密点云 + 原视频 | 高斯模型（model.pt / 通用 .ply）、烘焙网格 OBJ、量尺 v2 评分、留出帧对比视频 | concrete_2、实验室混凝土管 A、InPipe 172011、真实污水管 Pipe1 |
 
-**主要结果**（详见 [docs/01_流程复盘.md](docs/01_流程复盘.md) 和 [docs/03_与其他方法对比.md](docs/03_与其他方法对比.md)）
+**v2.0 主要结果**（详见第 1.1 节和 [docs/11](docs/11_质量提升与方法对比.md)；"留出"指训练时拿掉、没用过的帧）
+
+- 整段拿掉的 10 cm 管段上，PSNR 比 v1.0 模型高 3.5–9.2 dB，比同样设置训练的 3DGS / 2DGS 高 3.1–6.9 dB；
+  渲染深度对实测管壁的误差 0.6–1.8 %，3DGS / 2DGS 为 6–85 %。
+- InPipe、Pipe1 的管壁改为从视觉点云拟合：InPipe 半径 109.4 / 101.9 mm，与 RealSense 深度一致（v1.0 的激光管壁小 13–15 %）；
+  烘焙网格无破洞、无飞片，从管外看干净。
+
+**v1.0 主要结果**（详见 [docs/01_流程复盘.md](docs/01_流程复盘.md) 和 [docs/03_与其他方法对比.md](docs/03_与其他方法对比.md)）
 
 - 视觉：混凝土管 4 段独立检验视频的行程误差 −0.6% … −5.0%（平均 −2.7%），稠密点 87–96% 落在管壁 ±15% 内，整圈覆盖。
 - 新视频（没参与调参，[docs/02](docs/02_新视频测试_混凝土管.md)）：实验室混凝土管 448/451 帧、定位误差 0.37%、稠密点 99% 在管壁上；
@@ -30,6 +41,99 @@ v2.0 的高斯模型、烘焙网格、留出帧对比视频和重做所需的中
 ---
 
 ## 1. 流程
+
+### 1.1 v2.0：锚定高斯（最新）
+
+```mermaid
+flowchart TB
+  subgraph U["上游：v1.0 的产物（第 1.2 节）"]
+    U1["SfM 位姿 + OpenMVS 网格 / 稠密点云<br>concrete_2、实验室管、Pipe1"]
+    U2["InPipe：视觉 SfM 位姿 × AprilTag 尺度<br>export_inpipe_vision.py"]
+  end
+  subgraph S["① 场景与对照"]
+    S1["灯光图：v1.0 模型 × 画面固定的灯光图 = 对照 B<br>lampmap/lampmap.py"]
+    S2["导出场景 scene.npz<br>export_g0.py<br>训练帧 / 44 张序列内留出帧 / 两段 10 cm 整段留出"]
+  end
+  subgraph W["② 实测管壁"]
+    W1["OpenMVS 网格的三角面<br>export_surface.py → surface.npz<br>concrete_2、实验室管"]
+    W2["视觉高度场管壁 r(u, θ)<br>vision_surface.py → surface_vhf.npz<br>InPipe、Pipe1"]
+  end
+  subgraph T["③ 训练（WSL，gsplat）"]
+    T1["锚定高斯 train_gs.py --anchor<br>薄面元贴着管壁（±2 mm）+ 稠密深度约束<br>InPipe 另加车灯 + 环境光模型"]
+  end
+  subgraph E["④ 评分与对比"]
+    E1["量尺 v2：train_gs.py --ruler2 / rescore.py<br>所有模型同一批帧、同一批像素"]
+    E2["3DGS / 2DGS：train_gs.py --baseline<br>compare_methods.py、compare_video.py"]
+  end
+  subgraph D["⑤ 交付"]
+    D1["高斯模型 model.pt<br>export_ply.py → 通用 3DGS .ply"]
+    D2["烘焙网格 OBJ + PNG<br>bake_gs_tex.py（concrete_2）<br>bake_vhf.py（InPipe、Pipe1）"]
+  end
+  U1 --> S1
+  U1 --> S2
+  U2 --> S2
+  S1 --> S2
+  U1 --> W1
+  U1 --> W2
+  U2 --> W2
+  S2 --> T1
+  W1 --> T1
+  W2 --> T1
+  T1 --> E1
+  E2 -.->|同一套训练设置| E1
+  T1 --> D1
+  T1 --> D2
+  W2 --> D2
+```
+
+| 步骤 | 脚本（在哪运行） | 输入 → 输出 | 作用 / 结果 | 文档 |
+|---|---|---|---|---|
+| 上游 | `scripts/vision/run_pipeline.py`、`scripts/run_inpipe.py`（Windows） | 视频 / bag → SfM 位姿、OpenMVS 网格、稠密点云 | v1.0 流程，见第 1.2 节 | docs/01 |
+| InPipe 改用视觉位姿 | `pipesplat/export_inpipe_vision.py`（Windows） | v1.0 视觉模型 + AprilTag 尺度 → InPipe 场景 | 激光位姿和激光管壁与图像有毫米级错位，模型离开训练视角就崩；改用视觉位姿和几何后不再崩 | docs/10 X6–X7 |
+| ① 灯光图与对照 B | `lampmap/lampmap.py`、`lampmap_inpipe.py`（Windows；Pipe1 由 `export_g0.py --lamp auto` 现学） | v1.0 模型 + 建模帧 → `lamp_map.npy` | 机器人的灯跟着相机走，明暗每帧几乎相同；v1.0 模型乘上它就是对照 B（表中"v1.0 模型"一列），PSNR 提高 3.9–5.8 dB | lampmap/README.md |
+| ① 导出场景 | `pipesplat/export_g0.py`（Windows） | 原视频 + v1.0 工作目录 + 灯光图 → `scene.npz` | 训练帧；44 张序列内留出帧；两段 10 cm 整段留出（在全程 35 % 和 65 % 处），后两者都不参加训练 | docs/08、docs/10 |
+| ② 实测管壁 | `pipesplat/export_surface.py`（Windows）、`pipesplat/vision_surface.py`（WSL） | OpenMVS 网格 → `surface.npz`；视觉稠密点云 → 高度场管壁 `surface_vhf.npz` + `mesh_vhf.npz` | 高度场管壁：每 1 cm 拟合半径、偏心和椭圆，再叠加点云看得到的接缝和凹坑；无破洞、无飞片 | docs/09、docs/11 第 3、5 节 |
+| ③ 训练 | `pipesplat/train_gs.py`（WSL） | 场景 + 管壁 → `model.pt` | 30000 次迭代，每个模型 28–55 分钟、显存 ≤ 4.3 GB（RTX 5060 Ti）；高斯被约束成贴着管壁的薄面元，离开训练视角也不散 | docs/09、docs/11 |
+| ④ 评分 | `train_gs.py --ruler2`（训练结束时自动）、`pipesplat/rescore.py`（WSL） | 模型 + 留出帧 → `summary_r2.json`、逐帧表 | 量尺 v2：PSNR、LPIPS、错位、细 / 中 / 粗频段保真度，所有模型在同一批像素（B 的掩码）上比较；另算渲染深度对实测管壁的误差 | docs/10 第 2 节 |
+| ④ 对比现有方法 | `train_gs.py --baseline 3dgs\|2dgs`；`pipesplat/review/compare_methods.py`、`dump_frames.py` + `compare_video.py` | 同一批训练帧、位姿、画布、稠密点起步和迭代次数 | 对比表和留出帧对比视频（结果见下表） | docs/11 第 6 节 |
+| ⑤ 交付 | `pipesplat/export_ply.py`；`pipesplat/bake_gs_tex.py`、`bake_vhf.py`（WSL） | `model.pt` → 通用 .ply；→ OBJ + PNG（颜色取自原视频） | 管内视角用高斯模型；从管外看用烘焙网格（几何正确、干净，但静态贴图存不下随视角变化的反光，管内画质低于高斯模型） | docs/10 X8、docs/11 第 4、5 节 |
+
+**结果**（量尺 v2，PSNR dB：序列内留出帧 / 整段留出管段；括号里是渲染深度对实测管壁的误差；全部来自 [docs/11](docs/11_质量提升与方法对比.md) 第 1 节）
+
+| 数据 | v1.0 模型（B） | **v2.0 高斯模型** | 3DGS | 2DGS | v2.0 烘焙网格 |
+|---|---|---|---|---|---|
+| concrete_2（Sheffield 混凝土管） | 29.84 / 29.92 | **34.42 / 33.71**（G0-A，0.8 %） | 34.06 / 28.73（29.3 %） | 34.33 / 28.55（35.2 %） | 31.75 / 33.09（X8b） |
+| 实验室混凝土管 A（独立检验） | 25.26 / 24.42 | **28.78 / 28.05**（G0-A，0.6 %） | 28.68 / 24.91（26.6 %） | 训练发散 | — |
+| InPipe 172011 | 23.35 / 23.33 | **30.77 / 26.87**（Y1，1.8 %） | 30.65 / 20.02（11.9 %） | 30.47 / 20.08（6.2 %） | 20.95 / 20.72（Y2） |
+| Pipe1 真实污水管（前 10 m） | 24.08 / 22.62（贴图见过留出帧） | **34.09 / 31.77**（Y3，1.2 %） | 27.62 / 25.64（84.7 %） | 32.16 / 27.14（71.4 %） | 27.96 / 26.46（Y3） |
+
+- concrete_2、实验室管、InPipe 上，3DGS / 2DGS 在序列内留出帧（离训练视角很近）上与 v2.0 相当，一到整段拿掉的管段就明显变差，渲染深度也偏离管壁；Pipe1 上两者都更低。
+- 3DGS / 2DGS 用的是 gsplat 的实现、同一套训练设置，不是原作者代码和各自调好的超参数（docs/11 第 8 节）。
+- InPipe 的烘焙网格画面仍低于 B：车灯和从开缝、管口进来的室内光是两种光源，静态贴图表示不了。这是剩余问题第 1 项。
+  InPipe 上高斯模型的 LPIPS 也仍高于 B（0.342 对 0.288，越低越好）：渲染比 v1.0 的逐像素贴图平滑。
+
+模型、烘焙网格、对比视频和重做所需的中间文件在 [Releases `v2.0-results`](https://github.com/Bridge-coder/PipeRecon3D/releases/tag/v2.0-results)。
+
+**最短路径（以 Pipe1 为例）**。路径从 `scripts/paths.py` 取（第 4 节）；换一台机器的完整步骤见 [docs/12](docs/12_从GitHub恢复.md)。
+
+```powershell
+# Windows，仓库根目录：导出场景（Pipe1 的管径用于定公制尺度）
+$env:PIPE3D_PIPE_DIAMETER_M = '0.435'
+python -I pipesplat/export_g0.py vision <WORK_NEW>/sewer_pipe1/work <视频>/Pipe1.avi <GS_ROOT>/g0/sewer_pipe1 --lamp auto --plain --crop 0 0 720 490 --stretch-x 1.0159
+```
+
+```bash
+# WSL（wsl -d pipe3d -u root）：env.sh 给出 P = pipesplat/、GS = GS_ROOT、PY = 训练用的 Python
+source /mnt/<盘>/<路径>/PipeRecon3D/pipesplat/env.sh
+$PY $P/vision_surface.py $GS/g0/sewer_pipe1 --rounds 6 --detail-window-mm 40 --detail-max-mm 30   # ② 视觉高度场管壁
+bash $P/review/run_f2.sh sewer_pipe1 run_vhf --anchor --surface surface_vhf.npz                      # ③ 训练，结束时自动 ④ 评分
+$PY $P/bake_vhf.py $GS/g0/sewer_pipe1 $GS/g0/sewer_pipe1/run_vhf $GS/g0/sewer_pipe1/run_bake_vhf --texel-mm 1.0   # ⑤ 烘焙网格
+$PY $P/export_ply.py $GS/g0/sewer_pipe1/run_vhf                                                     # ⑤ 通用 3DGS .ply
+```
+
+各数据的完整命令（作者实际运行的）见 [docs/11](docs/11_质量提升与方法对比.md) 第 9 节；方案和各次迭代的来龙去脉见 docs/06–11。
+
+### 1.2 v1.0：视觉 + 激光融合（v2.0 的上游）
 
 ```mermaid
 flowchart LR
@@ -190,6 +294,18 @@ PipeRecon3D/
 ├─ requirements.txt / .gitignore
 ├─ config/paths.example.json      路径模板（复制为 paths.json）
 ├─ tools/install_third_party.py   下载 OpenMVG 1.6 / OpenMVS 2.4.0
+├─ lampmap/                       灯光图模型（v1.0 模型 × 画面固定的灯光图 = 对照 B）、图像指标 imgmetrics.py
+├─ pipesplat/                     v2.0 锚定高斯（训练和烘焙在 WSL 里运行）
+│  ├─ env.sh                      WSL 脚本的路径（取自 scripts/paths.py）
+│  ├─ setup/                      WSL 环境安装：系统包、CUDA 12.8、Python 环境、编译 gsplat
+│  ├─ export_g0.py export_inpipe_vision.py export_surface.py   导出场景和实测表面（Windows）
+│  ├─ vision_surface.py           视觉高度场管壁
+│  ├─ train_gs.py                 训练与评分：锚定、车灯 / 环境光模型、量尺 v2、3DGS / 2DGS 基线
+│  ├─ rescore.py                  按模型自己的参数重新评分，打印新旧对比
+│  ├─ bake_gs_tex.py bake_vhf.py export_ply.py   烘焙网格、通用 3DGS .ply
+│  ├─ meshraster.py export_tex_obj.py            网格光栅化、OBJ 导出（烘焙用）
+│  ├─ train_g0.py train_tex.py diag_*.py ...     早期步骤和诊断（docs/08–10）
+│  └─ review/                     对比表、对比视频、管外视图、训练队列等复盘脚本
 ├─ scripts/
 │  ├─ paths.py                    所有路径的唯一来源
 │  ├─ reconstruct_video.py        视频一键：重建 + 视图 + 对比视频
@@ -217,7 +333,7 @@ PipeRecon3D/
    ├─ 03_与其他方法对比.md
    ├─ 04_大文件清单.md             Releases 里的模型、点云、视频：内容、下载、校验、怎么接着用
    ├─ 05_数据下载.md               原始数据集的 DOI、文件、大小、MD5、许可
-   ├─ 06–09                       高斯泼溅改进方案、环境、G0 基线、几何锚定与车灯模型（探索分支）
+   ├─ 06–09                       高斯泼溅改进方案、环境、G0 基线、几何锚定与车灯模型
    ├─ 10_复盘与自检.md             全项目复盘：量尺 v2、逐环节核实、修复 X1–X7、当前最好的模型与剩余问题
    ├─ 11_质量提升与方法对比.md     接着 docs/10 的剩余问题：视觉高度场管壁（InPipe、Pipe1）、烘焙网格、与 3DGS / 2DGS 同尺对比
    ├─ 12_从GitHub恢复.md           本机文件全删之后：环境、路径配置、下载放置、重新导出场景、评分、训练；恢复测试记录
@@ -256,6 +372,7 @@ PipeRecon3D/
 
 | 想改进的地方 | 改哪里 | 现状 / 线索 |
 |---|---|---|
+| v2.0 高斯模型的剩余问题 | docs/11 第 8 节（按严重程度） | InPipe 两种光源的烘焙、Pipe1 的 SfM 尺度起伏、高斯模型从管外看是斑点、细节上限 |
 | 无纹理、暗的管道 | `vision/extract_frames.py`（预处理）、`run_pipeline.py` 步骤 4–5 | 时域平均 + 去噪无效；可试学习型特征（SuperPoint/LightGlue）或更强照明 |
 | SfM 引擎 | `run_pipeline.py` 步骤 7–9，或 `baselines/run_colmap.py --fixed` | 同样的标定内参下，实验室管上 COLMAP 稀疏定位与 OpenMVG 相当，真实污水管上断成两段（docs/03） |
 | 管底水流 / 沉积 | `run_pipeline.py` 步骤 11：每帧一张 `.mask.png` 遮住水流带，`DensifyPointCloud --mask-path DIR --ignore-mask-label N`（OpenMVS 2.4.0 已支持）；网格后剪掉过长三角形 | Pipe 1 下半周只覆盖 58%，有飞片 |
