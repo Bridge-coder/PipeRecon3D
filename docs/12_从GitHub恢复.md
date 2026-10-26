@@ -1,14 +1,16 @@
 # 12 从 GitHub 恢复（本机文件全部删掉之后）
 
 本文件回答：只剩 GitHub 上的仓库和 Releases 时，怎样拿回 v2.0 的三维重建结果，怎样重新评分（复现 docs/11 的数字），怎样重新训练。
-第 9 节是 2026-10-26 在本机做的恢复测试：全部只用 GitHub 上的文件，把 Pipe1 的场景重新导出，再给下载下来的模型重新评分。
+第 9 节是 2026-10-26 在本机做的恢复测试，全部只用 GitHub 上的文件：
+- Pipe1：重新导出场景，再给下载的模型重新评分；
+- InPipe：直接用 Release 里的场景文件，再给下载的模型重新评分。
 
 ## 1. 先看要做到哪一层
 
 | 层次 | 能得到什么 | 需要下载 | 需要的环境 | 验证情况 |
 |---|---|---|---|---|
 | A. 看结果 | 4 个高斯模型、3 个烘焙网格、对比视频、展示图、全部评分 | Release `v2.0-results` | 烘焙网格：MeshLab / Blender；高斯模型：B 的环境，或 `export_ply.py` 转成 .ply 后用 SuperSplat 等查看器打开 | 文件已按 SHA-256 核对 |
-| B. 重新评分 | 用下载的模型重算 docs/11 的表（同一批帧、同一批像素） | A + v2.0 的中间文件 + v1.0 Release 的工作目录 + 原始视频 | Windows Python + OpenMVG（导出场景）；WSL 发行版 pipe3d + gsplat（评分） | Pipe1 已测，见第 9 节 |
+| B. 重新评分 | 用下载的模型重算 docs/11 的表（同一批帧、同一批像素） | A + v2.0 的中间文件；concrete_2、实验室管、Pipe1 另需 v1.0 Release 的工作目录和原始视频（重新导出场景）；InPipe 用 v2.0 的场景文件，不需要原始数据 | Windows Python + OpenMVG（导出场景；InPipe 不需要）；WSL 发行版 pipe3d + gsplat（评分） | Pipe1、InPipe 已测，见第 9 节 |
 | C. 重新训练 | 从头训练出同样配置的模型和烘焙网格 | 同 B | 同 B；作者用 RTX 5060 Ti，每个模型训练 28–55 分钟，显存峰值 2.1–4.3 GB | 未重训；分数会有随机浮动（第 8 节） |
 | D. 中间文件也从头做 | 管壁、中心线、灯光图、v1.0 的 SfM / OpenMVS 模型全部重算 | 只要原始数据 | 同 B + v1.0 全流程（README 第 3 节） | 未测；结果不会逐位相同（第 8 节） |
 
@@ -78,8 +80,10 @@ WSL 的 shell 脚本通过 `pipesplat/env.sh` 取这些路径。本次用到的�
 
 ```bash
 gh release download v2.0-results --repo Bridge-coder/PipeRecon3D --dir D:/dl/v2.0
-gh release download v1.0-results --repo Bridge-coder/PipeRecon3D --dir D:/dl/v1.0 -p sheffield_concrete_2.zip -p concrete_lab.zip -p sewer_pipe1.zip -p inpipe_172011_vision_model.zip
+gh release download v1.0-results --repo Bridge-coder/PipeRecon3D --dir D:/dl/v1.0 -p sheffield_concrete_2.zip -p concrete_lab.zip -p sewer_pipe1.zip
 ```
+
+（InPipe 的场景文件在 v2.0 里，不需要 v1.0 的包；只有从原始数据全部重做时才要 v1.0 的 `inpipe_172011_vision_model.zip`，见第 6 节。）
 
 下载后先对照各自的 `SHA256SUMS.txt` 校验（Windows：`certutil -hashfile 文件 SHA256`）。原始视频按 [05_数据下载.md](05_数据下载.md) 下载并核对 MD5。
 
@@ -87,16 +91,19 @@ gh release download v1.0-results --repo Bridge-coder/PipeRecon3D --dir D:/dl/v1.
 |---|---|---|
 | `lamp_maps.zip`（v2.0） | 仓库根目录 | `lampmap/results/<数据>/lamp_map.npy`（v1.0 灯光图；仓库里 git 忽略了 .npy） |
 | `<数据>_intermediates.zip`（v2.0） | `GS_ROOT` | `g0/<数据>/` 下的管壁、中心线、网格、导出记录 |
+| `inpipe_172011_scene.zip`（v2.0） | `GS_ROOT` | `g0/inpipe_vision/scene.npz`：InPipe 的场景（训练图像、留出帧、B 渲染、位姿），不用再导出 |
 | `<数据>_gaussians_*.zip`（v2.0） | `GS_ROOT/g0/<场景>/` | 再把解出的文件夹改名为训练名：concrete_2、concrete_lab → `run_g0a`；InPipe → `g0/inpipe_vision/run_vhf`；Pipe1 → `run_vhf` |
 | `<数据>_baked_mesh_*.zip`（v2.0） | 任意位置 | 直接用 MeshLab / Blender 打开 `model.obj` |
 | `sheffield_concrete_2.zip`（v1.0） | `WORK_SHEFFIELD` | 把解出的 `sheffield_concrete_2/` 改名为 `concrete_2/` |
 | `concrete_lab.zip`（v1.0） | `WORK_NEW` | `concrete_lab/` |
 | `sewer_pipe1.zip`（v1.0） | `WORK_NEW/sewer_pipe1/` | 把解出的 `sewer_pipe1/` 改名为 `work/`，即 `WORK_NEW/sewer_pipe1/work/` |
-| `inpipe_172011_vision_model.zip`（v1.0） | 任意位置，再把 `INPIPE_VISION` 指过去 | InPipe 的 v1.0 视觉模型（SfM 位姿 + OpenMVS 网格）：高斯模型是在它的坐标系里训练的 |
+| `inpipe_172011_vision_model.zip`（v1.0，只在从原始数据重做 InPipe 时要） | 任意位置，再把 `INPIPE_VISION` 指过去 | InPipe 的 v1.0 视觉模型（SfM 位姿 + OpenMVS 网格）：高斯模型是在它的坐标系里训练的 |
 
 ## 6. 重新导出场景（scene.npz：训练图像、留出帧、B 渲染）
 
-scene.npz 带图像，每段约 0.4–1 GB，所以不上传，由原视频 + v1.0 工作目录重新导出（Windows，在仓库根目录；`<...>` 换成你的路径）：
+scene.npz 带图像，每段约 0.4–1 GB。concrete_2、实验室管、Pipe1 的场景不上传，由原视频 + v1.0 工作目录重新导出（Windows，在仓库根目录；`<...>` 换成你的路径）。
+InPipe 的场景已在 Release 里（`inpipe_172011_scene.zip`，见本节最后）：
+InPipe 的原始数据有 10 GB，而且要先跑完整个融合流程，所以直接上传。
 
 ```bash
 # concrete_2（Sheffield 5 m 混凝土管第 2 段）
@@ -110,7 +117,11 @@ python -I pipesplat/export_g0.py vision <WORK_NEW>/sewer_pipe1/work <视频>/Pip
 `export_lab.ps1` 也会运行 `export_surface.py`；它写出的 `surface.npz` 与中间文件包里的那份由同一个网格算出。
 Pipe1 用中间文件包里的 `lamp_map.npy`，不用 `--lamp auto`：作者导出时就是自动学出的这一张，B 的渲染（以及评分用的像素）才与 docs/11 一致。
 
-**InPipe** 要先把 v1.0 的激光 + 视觉融合流程跑到 R4（原始数据 10 GB，README 第 3.2 节），这一步**未做恢复测试**：
+**InPipe**：把 `inpipe_172011_scene.zip` 和 `inpipe_172011_intermediates.zip` 解压到 `GS_ROOT`，就得到 `g0/inpipe_vision/` 下的
+scene.npz、`surface_vhf.npz` 等全部输入，可以直接重新评分、重新训练、重新烘焙（第 7 节）。不需要原始数据，也不需要 OpenMVG。
+
+只有想连场景也从原始数据重做（第 1 节的 D 层）时，才需要下面这几步。做法是先把 v1.0 的激光 + 视觉融合流程跑到 R4
+（原始数据 10 GB，README 第 3.2 节），再导出场景。这一步**未做恢复测试**：
 
 ```bash
 # INPIPE_VISION 指向解压的 v1.0 视觉模型，跳过 vision 阶段（不重做 SfM，坐标系才与训练时相同）
@@ -119,7 +130,7 @@ python -I pipesplat/export_g0.py inpipe <GS_ROOT>/g0/inpipe_172011 --lamp lampma
 python -I pipesplat/export_inpipe_vision.py <GS_ROOT>/g0/inpipe_172011 <GS_ROOT>/g0/inpipe_vision
 ```
 
-融合各阶段会重新计算（外参 `extrinsic_translation_final.json` 在仓库里），B 的渲染可能与作者的有细微差别，所以 InPipe 的 B 分数和评分像素不保证与 docs/11 完全相同。
+融合各阶段会重新计算（外参 `extrinsic_translation_final.json` 在仓库里）。B 的渲染可能与作者的有细微差别，所以这样重做时，InPipe 的 B 分数和评分像素不保证与 docs/11 完全相同；用 Release 里的场景文件则完全相同（第 9 节）。
 导出后，再把中间文件包里的 `surface_vhf.npz`、`mesh_vhf.npz`、`centerline_vhf.npz` 放回 `g0/inpipe_vision/`：导出脚本会覆盖同名的 `surface.npz`，但不会覆盖这三个。
 
 ## 7. 重新评分、重新训练
@@ -146,8 +157,9 @@ wsl -d pipe3d -u root -- /opt/gsenv/bin/python /mnt/<盘>/<路径>/PipeRecon3D/p
 ## 8. 不能逐位复现的地方
 
 - **重新训练**：高斯训练有随机性（GPU 上并行求和的顺序等），重训出的模型不会与下载的逐位相同，分数会有小幅浮动。
-  本项目没有系统测过重训的浮动有多大；要复现 docs/11 的数字，请用下载的模型重新评分（第 9 节：与表中数字完全一致）。
-- **InPipe 的融合流程**：从原始数据重算，B 的渲染和评分像素可能与作者的有细微差别（第 6 节）。
+  本项目没有系统测过重训的浮动有多大；要复现 docs/11 的数字，请用下载的模型重新评分（第 9 节：Pipe1 与表中数字完全一致，InPipe 只差浮点舍入）。
+- **InPipe 的融合流程**：只在从原始数据重做场景时才涉及。这样重算出的 B 渲染和评分像素可能与作者的有细微差别（第 6 节）；用 Release 里的场景文件则没有这个问题。
+- **带灯光模型的评分（InPipe）**：同一个模型、同一个场景，每次评分会有极小的差别（相对差最大约 1.6e-6，PSNR 差约 1e-7 dB），在作者自己的机器上重新评分也一样（第 9 节）。不带灯光模型的 Pipe1 每次都逐位相同。
 - **换显卡或换 gsplat 版本**：渲染的浮点结果可能有极小差别。gsplat 版本固定在 commit `512d366`。
 - **不在 GitHub 上的东西**：
   - 框架流图的生成器（流图本身是 claude.ai 上的页面）；
@@ -156,8 +168,10 @@ wsl -d pipe3d -u root -- /opt/gsenv/bin/python /mnt/<盘>/<路径>/PipeRecon3D/p
 
 ## 9. 恢复测试记录（2026-10-26）
 
-目的：只用 GitHub 上的文件和原始视频，能否重新得到 docs/11 里 Pipe1 Y3 的数字（第 1 节的 B 层）。
+目的：只用 GitHub 上的文件（Pipe1 另加原始视频），能否重新得到 docs/11 里 Pipe1 Y3 和 InPipe Y1 的数字（第 1 节的 B 层）。
 在本机新建空目录 `D:/restore_test`，用 `PIPE3D_GS_ROOT` 把 `GS_ROOT` 指过去，作者原来的工作区一个文件都不读。
+
+**Pipe1 Y3**（重新导出场景）：
 
 | 步骤 | 输入 | 结果 |
 |---|---|---|
@@ -166,11 +180,23 @@ wsl -d pipe3d -u root -- /opt/gsenv/bin/python /mnt/<盘>/<路径>/PipeRecon3D/p
 | 3. 重新导出场景 | 第 6 节的 Pipe1 命令（中间文件包里的 `lamp_map.npy`） | 用时约 3 分钟，scene.npz 1.01 GB；与作者的 scene.npz **逐个数组逐位相同**：训练图像、留出帧、下一帧、B 渲染、掩码、位姿、点云，共 25 个数组 |
 | 4. 重新评分 | `rescore.py sewer_pipe1/run_vhf --suffix _restore` | 序列内 34.087 dB、整段留出 31.771 dB，B 24.080 / 22.624 dB，LPIPS 0.314 / 0.329，都与 docs/11 相同；`summary` 里 258 个数、逐帧表 55 帧 × 87 列，**没有一个不同** |
 
+**InPipe Y1**（用 Release 里的场景文件，不用原始数据）：
+
+| 步骤 | 输入 | 结果 |
+|---|---|---|
+| 1. 校验 | v2.0 `inpipe_172011_intermediates.zip`、`inpipe_172011_scene.zip`、`inpipe_172011_gaussians_y1.zip` | SHA-256 与 `SHA256SUMS.txt` 一致 |
+| 2. 放置 | 按第 5 节解压、改名 | `gs/g0/inpipe_vision/`（含 `run_vhf/`）；解出的 scene.npz 与作者的逐字节相同 |
+| 3. 重新评分 | `rescore.py inpipe_vision/run_vhf --suffix _restore` | 序列内 30.773 dB、整段留出 26.871 dB，B 23.351 / 23.328 dB，LPIPS 0.342 / 0.386，都与 docs/11 相同 |
+
+InPipe 的 258 个数里有 40 个不是逐位相同，但差别极小：相对差最大 1.6e-6（序列内 LPIPS 0.34224966 对 0.34225021），PSNR 最多差 1.3e-7 dB。
+在作者机器上用原来的文件重新评分（10-25），PSNR 也差 6.6e-8 dB，可见这是评分本身每次运行的浮动，与恢复无关。
+原因应是 GPU 上浮点求和的顺序不固定：InPipe 模型带灯光模型，Pipe1 不带，而 Pipe1 每次都逐位相同。这一点没有进一步追查。
+
 测试中发现并修好的一处：`rescore.py` 第一版没有传 `--alpha-min 0.5`。训练结束时按量尺 v2 评分用的是这个阈值，
 它只影响"模型覆盖率"和"深度误差"两列（PSNR、LPIPS 等是在 B 的掩码上算的，不受影响）。第一版的这两列与表中不同，加上之后完全一致。
 
 没有测的：
 - concrete_2、实验室管 A 的场景导出和评分：同一套代码，输入换成对应的 v1.0 工作目录。
-- InPipe：需要 10 GB 原始数据，并把融合流程从头跑一遍（第 6 节）。
+- InPipe 的场景从原始数据重做：需要 10 GB 原始数据，并把融合流程从头跑一遍（第 6 节）。用 Release 里的场景文件这条路已测。
 - 重新训练（第 7 节）。
 - 在一台全新的机器上装环境（第 3 节）：本次测试用的是本机已经装好的 WSL 和 OpenMVG。
